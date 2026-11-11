@@ -221,6 +221,8 @@ export interface ExpandQueryOptions {
  * DB state (useful for reopening a previously-configured store).
  */
 export interface StoreOptions {
+  /** Model idle timeout in milliseconds. Defaults to five minutes. Zero keeps models loaded. */
+  modelIdleTimeoutMs?: number;
   /** Path to the SQLite database file */
   dbPath: string;
   /** Path to a YAML config file (mutually exclusive with `config`) */
@@ -394,12 +396,12 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   // else: DB-only mode — no external config, use existing store_collections
 
   // Create a per-store LlamaCpp instance — lazy-loads models on first use,
-  // auto-unloads after 5 min inactivity to free VRAM.
+  // auto-unloads after the configured idle timeout to free VRAM.
   const llm = new LlamaCpp({
     embedModel: config?.models?.embed,
     generateModel: config?.models?.generate,
     rerankModel: config?.models?.rerank,
-    inactivityTimeoutMs: 5 * 60 * 1000,
+    inactivityTimeoutMs: options.modelIdleTimeoutMs ?? 5 * 60 * 1000,
     disposeModelsOnInactivity: true,
   });
   internal.llm = llm;
