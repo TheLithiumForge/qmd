@@ -1530,8 +1530,8 @@ export type Store = {
   toVirtualPath: (absolutePath: string) => string | null;
 
   // Search
-  searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[]) => SearchResult[];
-  searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[]) => Promise<SearchResult[]>;
+  searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], options?: SearchHydrationOptions) => SearchResult[];
+  searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], options?: SearchHydrationOptions) => Promise<SearchResult[]>;
 
   // Query expansion & reranking
   expandQuery: (query: string, model?: string) => Promise<ExpandedQuery[]>;
@@ -2271,8 +2271,8 @@ export function createStore(dbPath?: string): Store {
     toVirtualPath: (absolutePath: string) => toVirtualPath(db, absolutePath),
 
     // Search
-    searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[]) => searchFTS(db, query, limit, collectionName),
-    searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[]) => searchVec(db, query, model, limit, collectionName, session, precomputedEmbedding, getLlm(store)),
+    searchFTS: (query, limit, collectionName, options) => searchFTS(db, query, limit, collectionName, options),
+    searchVec: (query, model, limit, collectionName, session, precomputedEmbedding, options) => searchVec(db, query, model, limit, collectionName, session, precomputedEmbedding, getLlm(store), options),
 
     // Query expansion & reranking
     expandQuery: (query: string, model?: string) => expandQuery(query, model ?? store.llm?.generateModelName ?? DEFAULT_QUERY_MODEL, db, store.llm),
@@ -4043,12 +4043,15 @@ function mergeSearchResultsByScore(lists: SearchResult[][], limit: number): Sear
     .slice(0, limit);
 }
 
-export function searchFTS(db: Database, query: string, limit: number = 20, collectionName?: string | readonly string[]): SearchResult[] {
+export type SearchHydrationOptions = { includeBody?: boolean; includeContext?: boolean };
+
+export function searchFTS(db: Database, query: string, limit: number = 20, collectionName?: string | readonly string[], options: SearchHydrationOptions = {}): SearchResult[] {
+  const includeBody = options.includeBody !== false;
   const names = scopedCollectionNames(collectionName);
   // Search each requested collection before merging/truncating so a large
   // unrelated collection cannot occupy global top-k and starve the rest (#775).
   if (names && names.length > 1) {
-    return mergeSearchResultsByScore(names.map(name => searchFTS(db, query, limit, name)), limit);
+    return mergeSearchResultsByScore(names.map(name => searchFTS(db, query, limit, name, options)), limit);
   }
   const collectionFilter = names?.[0];
 
@@ -4079,12 +4082,12 @@ export function searchFTS(db: Database, query: string, limit: number = 20, colle
       'qmd://' || d.collection || '/' || d.path as filepath,
       d.collection || '/' || d.path as display_path,
       d.title,
-      content.doc as body,
+      ${includeBody ? 'content.doc' : 'NULL'} as body,
       d.hash,
       fm.bm25_score
     FROM fts_matches fm
     JOIN documents d ON d.id = fm.rowid
-    JOIN content ON content.hash = d.hash
+    ${includeBody ? 'JOIN content ON content.hash = d.hash' : ''}
     WHERE d.active = 1
   `;
 
@@ -4113,9 +4116,9 @@ export function searchFTS(db: Database, query: string, limit: number = 20, colle
       docid: getDocid(row.hash),
       collectionName,
       modifiedAt: "",  // Not available in FTS query
-      bodyLength: row.body.length,
-      body: row.body,
-      context: getContextForFile(db, row.filepath),
+      bodyLength: row.body?.length ?? 0,
+      body: includeBody ? row.body : undefined,
+      context: options.includeContext === false ? null : getContextForFile(db, row.filepath),
       score,
       source: "fts" as const,
     };
@@ -4184,7 +4187,8 @@ function annVecScan(
   `).all(new Float32Array(embedding), vecK) as { hash_seq: string; distance: number }[];
 }
 
-export async function searchVec(db: Database, query: string, model: string, limit: number = 20, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], llm?: LlamaCpp): Promise<SearchResult[]> {
+export async function searchVec(db: Database, query: string, model: string, limit: number = 20, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], llm?: LlamaCpp, options: SearchHydrationOptions = {}): Promise<SearchResult[]> {
+  const includeBody = options.includeBody !== false;
   const tableExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='vectors_vec'`).get();
   if (!tableExists) return [];
 
@@ -4194,7 +4198,7 @@ export async function searchVec(db: Database, query: string, model: string, limi
   const names = scopedCollectionNames(collectionName);
   if (names && names.length > 1) {
     const lists = await Promise.all(
-      names.map(name => searchVec(db, query, model, limit, name, session, embedding, llm)),
+      names.map(name => searchVec(db, query, model, limit, name, session, embedding, llm, options)),
     );
     return mergeSearchResultsByScore(lists, limit);
   }
@@ -4253,10 +4257,10 @@ export async function searchVec(db: Database, query: string, model: string, limi
       'qmd://' || d.collection || '/' || d.path as filepath,
       d.collection || '/' || d.path as display_path,
       d.title,
-      content.doc as body
+      ${includeBody ? 'content.doc' : 'NULL'} as body
     FROM content_vectors cv
     JOIN documents d ON d.hash = cv.hash AND d.active = 1
-    JOIN content ON content.hash = d.hash
+    ${includeBody ? 'JOIN content ON content.hash = d.hash' : ''}
     WHERE cv.hash || '_' || cv.seq IN (${placeholders})
   `;
   const params: string[] = [...hashSeqs];
@@ -4294,9 +4298,9 @@ export async function searchVec(db: Database, query: string, model: string, limi
         docid: getDocid(row.hash),
         collectionName,
         modifiedAt: "",  // Not available in vec query
-        bodyLength: row.body.length,
-        body: row.body,
-        context: getContextForFile(db, row.filepath),
+        bodyLength: row.body?.length ?? 0,
+        body: includeBody ? row.body : undefined,
+        context: options.includeContext === false ? null : getContextForFile(db, row.filepath),
         score: 1 - bestDist,  // Cosine similarity = 1 - cosine distance
         source: "vec" as const,
         chunkPos: row.pos,

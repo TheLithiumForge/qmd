@@ -177,6 +177,10 @@ export interface SearchOptions {
  * Options for searchLex() — BM25 keyword search.
  */
 export interface LexSearchOptions {
+  /** Defaults to true. False skips content hydration and reports bodyLength 0. */
+  includeBody?: boolean;
+  /** Defaults to true. False skips path context lookup. */
+  includeContext?: boolean;
   limit?: number;
   collection?: string | string[];
 }
@@ -185,6 +189,10 @@ export interface LexSearchOptions {
  * Options for searchVector() — vector similarity search.
  */
 export interface VectorSearchOptions {
+  /** Defaults to true. False skips content hydration and reports bodyLength 0. */
+  includeBody?: boolean;
+  /** Defaults to true. False skips path context lookup. */
+  includeContext?: boolean;
   limit?: number;
   collection?: string | string[];
 }
@@ -432,8 +440,8 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         chunkStrategy: opts.chunkStrategy,
       });
     },
-    searchLex: async (q, opts) => internal.searchFTS(q, opts?.limit, opts?.collection),
-    searchVector: async (q, opts) => internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection),
+    searchLex: async (q, opts) => internal.searchFTS(q, opts?.limit, opts?.collection, opts),
+    searchVector: async (q, opts) => internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection, undefined, undefined, opts),
     expandQuery: async (q) => internal.expandQuery(q),
     get: async (pathOrDocid, opts) => internal.findDocument(pathOrDocid, opts),
     getDocumentBody: async (pathOrDocid, opts) => {
