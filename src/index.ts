@@ -44,6 +44,7 @@ import {
   deleteLLMCache,
   deleteInactiveDocuments,
   clearAllEmbeddings,
+  formatQueryForEmbedding,
   type Store as InternalStore,
   type DocumentResult,
   type DocumentNotFound,
@@ -185,6 +186,8 @@ export interface LexSearchOptions {
  * Options for searchVector() — vector similarity search.
  */
 export interface VectorSearchOptions {
+  /** Query embedding from embedQuery(), using this store's embedding model. */
+  embedding?: number[];
   limit?: number;
   collection?: string | string[];
 }
@@ -241,6 +244,9 @@ export interface QMDStore {
 
   /** Vector similarity search (embedding model, no reranking) */
   searchVector(query: string, options?: VectorSearchOptions): Promise<SearchResult[]>;
+
+  /** Apply the model query instruction once and embed for reuse across searches. */
+  embedQuery(query: string): Promise<number[] | null>;
 
   /** Expand a query into typed sub-searches (lex/vec/hyde) for manual control */
   expandQuery(query: string, options?: ExpandQueryOptions): Promise<ExpandedQuery[]>;
@@ -433,7 +439,11 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
       });
     },
     searchLex: async (q, opts) => internal.searchFTS(q, opts?.limit, opts?.collection),
-    searchVector: async (q, opts) => internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection),
+    searchVector: async (q, opts) => internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection, undefined, opts?.embedding),
+    embedQuery: async (q) => {
+      const result = await llm.embed(formatQueryForEmbedding(q, llm.embedModelName), { model: llm.embedModelName, isQuery: true });
+      return result?.embedding ?? null;
+    },
     expandQuery: async (q) => internal.expandQuery(q),
     get: async (pathOrDocid, opts) => internal.findDocument(pathOrDocid, opts),
     getDocumentBody: async (pathOrDocid, opts) => {
