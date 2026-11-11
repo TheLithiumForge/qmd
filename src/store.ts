@@ -4211,9 +4211,14 @@ export async function searchVec(db: Database, query: string, model: string, limi
   const hashSeqs = vecResults.map(r => r.hash_seq);
   const distanceMap = new Map(vecResults.map(r => [r.hash_seq, r.distance]));
 
-  // Build query for document lookup
-  const placeholders = hashSeqs.map(() => '?').join(',');
+  // Join both primary-key columns instead of scanning concatenated keys.
+  const keys = hashSeqs.map(key => {
+    const separator = key.lastIndexOf('_');
+    return [key.slice(0, separator), Number(key.slice(separator + 1))];
+  });
+  const placeholders = keys.map(() => '(?, ?)').join(',');
   let docSql = `
+    WITH requested(hash, seq) AS (VALUES ${placeholders})
     SELECT
       cv.hash || '_' || cv.seq as hash_seq,
       cv.hash,
@@ -4222,18 +4227,21 @@ export async function searchVec(db: Database, query: string, model: string, limi
       d.collection || '/' || d.path as display_path,
       d.title,
       ${includeBody ? 'content.doc' : 'NULL'} as body
-    FROM content_vectors cv
-    JOIN documents d ON d.hash = cv.hash AND d.active = 1
+    FROM requested
+    CROSS JOIN content_vectors cv
+    CROSS JOIN documents d
     ${includeBody ? 'JOIN content ON content.hash = d.hash' : ''}
-    WHERE cv.hash || '_' || cv.seq IN (${placeholders})
+    WHERE cv.hash = requested.hash AND cv.seq = requested.seq
+      AND d.hash = cv.hash AND d.active = 1
   `;
-  const params: string[] = [...hashSeqs];
+  const params: (string | number)[] = keys.flat();
 
   if (collectionFilter) {
     docSql += ` AND d.collection = ?`;
     params.push(collectionFilter);
   }
 
+  docSql += ' ORDER BY d.id, cv.seq';
   const docRows = withLazyContentVectorMigration(db, () => db.prepare(docSql).all(...params) as {
     hash_seq: string; hash: string; pos: number; filepath: string;
     display_path: string; title: string; body: string;
