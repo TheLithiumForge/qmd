@@ -4129,46 +4129,20 @@ export function searchFTS(db: Database, query: string, limit: number = 20, colle
 /** sqlite-vec rejects k above this in MATCH queries (v0.1.9). */
 const SQLITE_VEC_MAX_K = 4096;
 
-/**
- * Max collection-scoped vectors for an exact cosine scan. Above this we fall
- * back to global ANN with a capped over-fetch. Exact scan avoids the
- * post-filter starvation of small collections (#791, #803); ANN remains for
- * very large collections where a full scan would be expensive.
- */
-const COLLECTION_VEC_EXACT_SCAN_MAX = 20_000;
-
-const VEC_HASH_SEQ_IN_CHUNK = 400;
-
-/**
- * Exact cosine-distance scan over a known set of hash_seq keys.
- * Uses vec_distance_cosine with chunked IN lists (no JOIN with vectors_vec).
- */
-function exactVecScanByHashSeq(
+/** KNN over collection keys, without a virtual-table join or parameter-size limit. */
+function scopedVecScanByHashSeq(
   db: Database,
   embedding: number[],
   hashSeqs: string[],
   limit: number,
 ): { hash_seq: string; distance: number }[] {
   if (hashSeqs.length === 0 || limit <= 0) return [];
-
-  const queryVec = new Float32Array(embedding);
-  // Over-fetch a bit so multi-chunk docs can still yield `limit` unique files.
-  const fetchLimit = Math.max(limit * 3, limit);
-  const scored: { hash_seq: string; distance: number }[] = [];
-
-  for (let i = 0; i < hashSeqs.length; i += VEC_HASH_SEQ_IN_CHUNK) {
-    const chunk = hashSeqs.slice(i, i + VEC_HASH_SEQ_IN_CHUNK);
-    const placeholders = chunk.map(() => "?").join(",");
-    const rows = db.prepare(`
-      SELECT hash_seq, vec_distance_cosine(embedding, ?) AS distance
-      FROM vectors_vec
-      WHERE hash_seq IN (${placeholders})
-    `).all(queryVec, ...chunk) as { hash_seq: string; distance: number }[];
-    scored.push(...rows);
-  }
-
-  scored.sort((a, b) => a.distance - b.distance);
-  return scored.slice(0, fetchLimit);
+  const k = Math.max(1, Math.min(SQLITE_VEC_MAX_K, limit * 3));
+  return db.prepare(`
+     SELECT hash_seq, distance FROM vectors_vec
+     WHERE embedding MATCH ? AND k = ?
+       AND hash_seq IN (SELECT value FROM json_each(?))
+  `).all(new Float32Array(embedding), k, JSON.stringify(hashSeqs)) as { hash_seq: string; distance: number }[];
 }
 
 function annVecScan(
@@ -4207,12 +4181,7 @@ export async function searchVec(db: Database, query: string, model: string, limi
 
   // Step 1: Get vector matches from sqlite-vec (no JOINs allowed).
   //
-  // Collection filter cannot be pushed into MATCH (sqlite-vec has no join-safe
-  // predicate here). Global ANN + post-filter starves small collections: they
-  // never enter the top-k (#791, #803). Multiplier over-fetch alone is not
-  // enough either — sqlite-vec caps k at 4096. For a collection filter we
-  // therefore exact-scan that collection's vectors when the set is small
-  // enough, and only then fall back to capped ANN + post-filter.
+  // Apply collection scope inside KNN through a key allowlist.
   let vecResults: { hash_seq: string; distance: number }[];
 
   if (collectionFilter) {
@@ -4227,12 +4196,7 @@ export async function searchVec(db: Database, query: string, model: string, limi
 
     if (collectionHashSeqs.length === 0) return [];
 
-    if (collectionHashSeqs.length <= COLLECTION_VEC_EXACT_SCAN_MAX) {
-      vecResults = exactVecScanByHashSeq(db, embedding, collectionHashSeqs, limit);
-    } else {
-      // Large collection: ANN with over-fetch, hard-capped at sqlite-vec's max k.
-      vecResults = annVecScan(db, embedding, Math.max(limit * 30, limit * 3));
-    }
+    vecResults = scopedVecScanByHashSeq(db, embedding, collectionHashSeqs, limit);
   } else {
     vecResults = annVecScan(db, embedding, limit * 3);
   }
