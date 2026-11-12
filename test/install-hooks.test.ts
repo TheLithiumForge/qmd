@@ -63,12 +63,11 @@ describe("scripts/install-hooks.mjs", () => {
     }
   });
 
-  test("package.json prepare keeps Windows-safe hooks AND dist build", () => {
+  test("release package uses committed dist without install hooks or a compiler", () => {
     const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
-    expect(pkg.scripts.prepare).toBe(
-      "node scripts/install-hooks.mjs && node scripts/build.mjs",
-    );
-    // Must not use a POSIX shell test / .sh fragment (breaks cmd.exe).
-    expect(pkg.scripts.prepare).not.toMatch(/\[ -d|\.sh/);
+    expect(pkg.scripts.prepare).toBeUndefined();
+    expect(existsSync(join(repoRoot, "dist", "index.js"))).toBe(true);
+    expect(existsSync(join(repoRoot, "dist", "index.d.ts"))).toBe(true);
+    expect(pkg.files).toContain("dist/");
   });
 });
