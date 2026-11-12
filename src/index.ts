@@ -1,3 +1,4 @@
+import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 /**
  * QMD SDK - Library mode for programmatic access to QMD search and indexing.
  *
@@ -25,6 +26,7 @@ import {
   addLineNumbers,
   DEFAULT_MULTI_GET_MAX_BYTES,
   reindexCollection,
+  removeUnusedTargetVectors,
   generateEmbeddings,
   listCollections as storeListCollections,
   syncConfigToDb,
@@ -135,6 +137,15 @@ export type UpdateProgress = {
 /**
  * Aggregated result from update() across all collections.
  */
+export interface UpdateOptions {
+  collections?: string[];
+  /** Named files only. Absolute paths, qmd://collection/path, or relative paths with one selected collection. */
+  changed?: string[];
+  /** Files to deactivate. Uses the same path forms as changed. */
+  removed?: string[];
+  onProgress?: (info: UpdateProgress) => void;
+}
+
 export type UpdateResult = {
   collections: number;
   indexed: number;
@@ -292,11 +303,8 @@ export interface QMDStore {
 
   // ── Indexing ────────────────────────────────────────────────────────
 
-  /** Re-index collections by scanning the filesystem */
-  update(options?: {
-    collections?: string[];
-    onProgress?: (info: UpdateProgress) => void;
-  }): Promise<UpdateResult>;
+  /** Re-index collections. With changed or removed, process only the named files. */
+  update(options?: UpdateOptions): Promise<UpdateResult>;
 
   /** Generate vector embeddings for documents that need them */
   embed(options?: {
@@ -501,13 +509,41 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         ? collections.filter(c => updateOpts.collections!.includes(c.name))
         : collections;
 
+      const targeted = updateOpts?.changed !== undefined || updateOpts?.removed !== undefined;
+      const targets = new Map(filtered.map(col => [col.name, { changed: [] as string[], removed: [] as string[] }]));
+      if (targeted) {
+        // Resolve every input before writing, so invalid paths cannot leave a partial update.
+        for (const kind of ["changed", "removed"] as const) {
+          for (const input of updateOpts?.[kind] ?? []) {
+            const virtual = /^qmd:\/\/([^/]+)\/(.+)$/.exec(input);
+            if (!virtual && !isAbsolute(input) && filtered.length !== 1) {
+              throw new Error("Relative update paths require exactly one selected collection");
+            }
+            let matched = false;
+            for (const col of filtered) {
+              if (virtual && virtual[1] !== col.name) continue;
+              const path = virtual ? virtual[2]! : input;
+              const local = relative(resolvePath(col.path), resolvePath(col.path, path)).replaceAll("\\", "/");
+              if (!local || local === ".." || local.startsWith("../") || isAbsolute(local)) continue;
+              targets.get(col.name)![kind].push(local);
+              matched = true;
+            }
+            if (!matched) throw new Error(`Update path is outside selected collections: ${input}`);
+          }
+        }
+      }
+      const selected = targeted
+        ? filtered.filter(col => targets.get(col.name)!.changed.length || targets.get(col.name)!.removed.length)
+        : filtered;
+      const pendingVectorCleanup = new Set<string>();
       internal.clearCache();
 
       let totalIndexed = 0, totalUpdated = 0, totalUnchanged = 0, totalRemoved = 0, totalSkipped = 0;
 
-      for (const col of filtered) {
+      for (const col of selected) {
         const result = await reindexCollection(internal, col.path, col.pattern || "**/*.md", col.name, {
           ignorePatterns: col.ignore,
+          ...(targeted ? { ...targets.get(col.name)!, pendingVectorCleanup } : {}),
           onProgress: updateOpts?.onProgress
             ? (info) => updateOpts.onProgress!({ collection: col.name, ...info })
             : undefined,
@@ -519,8 +555,9 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         totalSkipped += result.skipped;
       }
 
+      if (targeted) removeUnusedTargetVectors(db, pendingVectorCleanup);
       return {
-        collections: filtered.length,
+        collections: selected.length,
         indexed: totalIndexed,
         updated: totalUpdated,
         unchanged: totalUnchanged,
