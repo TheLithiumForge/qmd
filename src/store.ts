@@ -1609,6 +1609,10 @@ export async function reindexCollection(
   collectionName: string,
   options?: {
     ignorePatterns?: string[];
+    changed?: string[];
+    removed?: string[];
+    /** SDK batches cleanup until all selected collections finish. */
+    pendingVectorCleanup?: Set<string>;
     onProgress?: (info: ReindexProgress) => void;
   }
 ): Promise<ReindexResult> {
@@ -1620,7 +1624,8 @@ export async function reindexCollection(
     ...excludeDirs.map(d => `**/${d}/**`),
     ...(options?.ignorePatterns || []),
   ];
-  const allFiles: string[] = await fastGlob(splitGlobMask(globPattern), {
+  const targeted = options?.changed !== undefined || options?.removed !== undefined;
+  const allFiles: string[] = targeted ? [...new Set(options?.changed ?? [])] : await fastGlob(splitGlobMask(globPattern), {
     cwd: collectionPath,
     onlyFiles: true,
     followSymbolicLinks: false,
@@ -1630,13 +1635,16 @@ export async function reindexCollection(
   // Filter hidden files/folders
   const files = allFiles.filter(file => {
     const parts = file.split("/");
-    return !parts.some(part => part.startsWith("."));
+    return !parts.some(part => part.startsWith(".")) && (!targeted || (
+      picomatch(splitGlobMask(globPattern))(file) && !picomatch(allIgnore)(file)
+    ));
   });
 
   const total = files.length;
-  let indexed = 0, updated = 0, unchanged = 0, processed = 0;
+  let indexed = 0, updated = 0, unchanged = 0, processed = 0, removed = 0;
   const skippedFiles: ReindexSkippedFile[] = [];
   const seenPaths = new Set<string>();
+  const staleHashes = options?.pendingVectorCleanup ?? new Set<string>();
   // Literal paths of every file in this scan. Passed to the legacy-path
   // migration so it never adopts a row that still belongs to a live file.
   const livePaths = new Set(files.map(f => normalizePathSeparators(f)));
@@ -1672,6 +1680,14 @@ export async function reindexCollection(
     }
 
     if (!content.trim()) {
+      if (targeted) {
+        const existing = findActiveDocument(db, collectionName, path);
+        if (existing) {
+          staleHashes.add(existing.hash);
+          deactivateDocument(db, collectionName, path);
+          removed++;
+        }
+      }
       processed++;
       continue;
     }
@@ -1679,7 +1695,9 @@ export async function reindexCollection(
     const hash = await hashContent(content);
     const title = extractTitle(content, relativeFile);
 
-    const existing = findOrMigrateLegacyDocument(db, collectionName, path, livePaths);
+    // A partial file list cannot establish which legacy paths are still live.
+    const existing = targeted ? findActiveDocument(db, collectionName, path)
+      : findOrMigrateLegacyDocument(db, collectionName, path, livePaths);
 
     if (existing) {
       if (existing.hash === hash) {
@@ -1690,6 +1708,7 @@ export async function reindexCollection(
           unchanged++;
         }
       } else {
+        if (targeted) staleHashes.add(existing.hash);
         insertContent(db, hash, content, now);
         const stat = statSync(filepath);
         updateDocument(db, existing.id, title, hash,
@@ -1710,18 +1729,44 @@ export async function reindexCollection(
   }
 
   // Deactivate documents that no longer exist
-  const allActive = getActiveDocumentPaths(db, collectionName);
-  let removed = 0;
+  const allActive = targeted ? [...new Set(options?.removed ?? [])] : getActiveDocumentPaths(db, collectionName);
   for (const path of allActive) {
     if (!seenPaths.has(path)) {
+      const existing = targeted ? findActiveDocument(db, collectionName, path) : null;
+      if (targeted && !existing) continue;
+      if (existing) staleHashes.add(existing.hash);
       deactivateDocument(db, collectionName, path);
       removed++;
     }
   }
 
-  const orphanedCleaned = cleanupOrphanedContent(db);
+  // Defer cleanup until additions and removals finish. A rename can reuse its hash.
+  if (targeted && !options?.pendingVectorCleanup) removeUnusedTargetVectors(db, staleHashes);
+  const orphanedCleaned = targeted ? 0 : cleanupOrphanedContent(db);
 
   return { indexed, updated, unchanged, removed, orphanedCleaned, skipped: skippedFiles.length, skippedFiles };
+}
+
+/** Remove only affected hashes after their last active document disappears. */
+export function removeUnusedTargetVectors(db: Database, hashes: Set<string>): void {
+  if (hashes.size === 0) return;
+  const hasVectors = isSqliteVecAvailable() && !!db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE name = 'vectors_vec'"
+  ).get();
+  withLazyContentVectorMigration(db, () => db.transaction(() => {
+    for (const hash of hashes) {
+      if (db.prepare("SELECT 1 FROM documents WHERE hash = ? AND active = 1 LIMIT 1").get(hash)) continue;
+      if (hasVectors) {
+        const chunks = db.prepare("SELECT seq FROM content_vectors WHERE hash = ?").all(hash) as { seq: number }[];
+        for (const { seq } of chunks) db.prepare("DELETE FROM vectors_vec WHERE hash_seq = ?").run(`${hash}_${seq}`);
+      }
+      // Without vec0, keep metadata too so a later reopen can clean both tables.
+      if (hasVectors) db.prepare("DELETE FROM content_vectors WHERE hash = ?").run(hash);
+      // Keep bodies referenced by inactive document tombstones, as full update does.
+      db.prepare("DELETE FROM content WHERE hash = ? AND NOT EXISTS (SELECT 1 FROM documents WHERE hash = ?)")
+        .run(hash, hash);
+    }
+  }).immediate());
 }
 
 export type EmbedFailure = {
