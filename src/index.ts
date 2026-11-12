@@ -1,4 +1,3 @@
-import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 /**
  * QMD SDK - Library mode for programmatic access to QMD search and indexing.
  *
@@ -18,6 +17,7 @@ import { isAbsolute, relative, resolve as resolvePath } from "node:path";
  *   await store.close()
  */
 
+import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   createStore as createStoreInternal,
   hybridQuery,
@@ -136,7 +136,7 @@ export type UpdateProgress = {
 };
 
 /**
- * Aggregated result from update() across all collections.
+ * Options for a full scan or a named-file update.
  */
 export interface UpdateOptions {
   collections?: string[];
@@ -147,6 +147,7 @@ export interface UpdateOptions {
   onProgress?: (info: UpdateProgress) => void;
 }
 
+/** Aggregated result from update() across all selected collections. */
 export type UpdateResult = {
   collections: number;
   indexed: number;
