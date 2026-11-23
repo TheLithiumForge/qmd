@@ -273,6 +273,12 @@ export interface SearchOptions {
  * Options for searchLex() — BM25 keyword search.
  */
 export interface LexSearchOptions {
+  /**
+   * Match documents with any term of the query instead of all of them (default: false).
+   * BM25 then adds up the terms each document matches, so a natural-language
+   * question finds documents that share some of its words.
+   */
+  anyTerm?: boolean;
   limit?: number;
   collection?: string | string[];
   /** Metadata filter — every returned result satisfies it */
@@ -807,7 +813,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     }),
     searchLex: (q, opts) => admit("searchLex", async () => {
       const filter = opts?.filter === undefined ? undefined : parseMetadataFilter(opts.filter);
-      return internal.searchFTS(q, opts?.limit, opts?.collection, filter);
+      return internal.searchFTS(q, opts?.limit, opts?.collection, filter, opts);
     }),
     searchVector: (q, opts) => admit("searchVector", async () => {
       const filter = opts?.filter === undefined ? undefined : parseMetadataFilter(opts.filter);
