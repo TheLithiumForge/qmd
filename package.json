@@ -23,10 +23,10 @@
     "scripts/package-smoke.mjs",
     "scripts/test-all.mjs",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "RUNE_CHANGES.md"
   ],
   "scripts": {
-    "prepare": "node scripts/install-hooks.mjs && node scripts/build.mjs",
     "build": "node scripts/build.mjs",
     "test": "node scripts/test-all.mjs",
     "test:types": "node ./node_modules/typescript/bin/tsc -p tsconfig.build.json --noEmit",

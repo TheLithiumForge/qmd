@@ -124,4 +124,8 @@ These counts come from PowerShell. Git Bash has a `sleep` command, so three of t
 
 Rune pins a commit from [TheLithiumForge/qmd](https://github.com/TheLithiumForge/qmd). The dependency keeps the `@tobilu/qmd` package name, so SDK imports stay the same.
 
+`rune/release-v2.8.3-next` adds the JavaScript and declarations built from `rune/v2.8.3-next` at `0873ef6`. It omits `prepare`, so installing the dependency needs neither checkout hooks nor a package-local TypeScript compiler. `test/install-hooks.test.ts` checks this release contract. The source branch keeps QMD's developer setup.
+
+On Windows x64, Bun 1.3.14 installs the source commit without running its untrusted `prepare` script, leaving `dist/` absent. The script also expects a package-local compiler that this install lacks. The release branch gives all six targets the same JavaScript and declarations. Native dependencies still come from each target's existing packages. Installation on the other five targets needs platform CI.
+
 All changes live in QMD source. The MIT `LICENSE` is unchanged. CLI source is unchanged. A store opened without `readOnly` still initializes as QMD 2.8.3 does.
