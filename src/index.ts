@@ -17,6 +17,7 @@
  *   await store.close()
  */
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 
 import {
   createStore as createStoreInternal,
@@ -441,11 +442,22 @@ export interface QMDStore {
 
   // ── Indexing ────────────────────────────────────────────────────────
 
-  /** Re-index collections by scanning the filesystem */
+  /**
+   * Re-index collections by scanning the filesystem.
+   *
+   * With `changed` or `removed`, only the named files are read or deactivated,
+   * and no collection folder is scanned. A path is absolute, `qmd://collection/path`,
+   * or relative to the one selected collection. Collections with a processor
+   * need a full update.
+   */
   update(options?: {
     processors?: Record<string, DocumentProcessor>;
     signal?: AbortSignal;
     collections?: string[];
+    /** Files to index. A file missing from disk is skipped, so list it in `removed`. */
+    changed?: string[];
+    /** Files to deactivate. A file also listed in `changed` is indexed if it can be read. */
+    removed?: string[];
     onProgress?: (info: UpdateProgress) => void;
   }): Promise<UpdateResult>;
 
@@ -905,10 +917,35 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         ? collections.filter(c => updateOpts.collections!.includes(c.name))
         : collections;
 
-      const prepared = filtered.map(col => {
+      // Resolve every named path before writing, so an invalid one cannot leave a partial update.
+      const targeted = updateOpts?.changed !== undefined || updateOpts?.removed !== undefined;
+      const targets = new Map(filtered.map(col => [col.name, { changed: [] as string[], removed: [] as string[] }]));
+      for (const kind of ["changed", "removed"] as const) {
+        for (const input of updateOpts?.[kind] ?? []) {
+          const virtual = /^qmd:\/\/([^/]+)\/(.+)$/.exec(input);
+          if (!virtual && !isAbsolute(input) && filtered.length !== 1) {
+            throw new Error("Relative update paths require exactly one selected collection");
+          }
+          let matched = false;
+          for (const col of filtered) {
+            if (virtual && virtual[1] !== col.name) continue;
+            const local = relative(resolvePath(col.path), resolvePath(col.path, virtual ? virtual[2]! : input)).replaceAll("\\", "/");
+            if (!local || local === ".." || local.startsWith("../") || isAbsolute(local)) continue;
+            targets.get(col.name)![kind].push(local);
+            matched = true;
+          }
+          if (!matched) throw new Error(`Update path is outside selected collections: ${input}`);
+        }
+      }
+      const selected = targeted
+        ? filtered.filter(col => targets.get(col.name)!.changed.length > 0 || targets.get(col.name)!.removed.length > 0)
+        : filtered;
+
+      const prepared = selected.map(col => {
         const registered = updateOpts?.processors?.[col.name];
         const processor = registered ? snapshotProcessor(registered) : undefined;
         requireProcessor(db, col.name, !!col.processor, processor);
+        if (targeted && processor) throw new Error(`Collection '${col.name}' has a processor and needs a full update`);
         return { col, processor };
       });
       internal.clearCache();
@@ -920,6 +957,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
           ignorePatterns: col.ignore,
           processor,
           signal: updateOpts?.signal,
+          ...(targeted ? targets.get(col.name) : {}),
           onProgress: updateOpts?.onProgress
             ? (info) => updateOpts.onProgress!({ collection: col.name, ...info })
             : undefined,
@@ -941,7 +979,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
       const staleVectorsRemoved = cleanupOrphanedVectors(db);
 
       return {
-        collections: filtered.length,
+        collections: prepared.length,
         indexed: totalIndexed,
         updated: totalUpdated,
         unchanged: totalUnchanged,
