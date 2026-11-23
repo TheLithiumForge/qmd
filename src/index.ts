@@ -509,6 +509,9 @@ export interface QMDStore {
     onProgress?: (info: EmbedProgress) => void;
   }): Promise<EmbedResult>;
 
+  /** Count tokens with this store's embedding model, the way embed() sizes chunks. Loads the model on first use. */
+  countTokens(text: string): Promise<number>;
+
   // ── Index Health ────────────────────────────────────────────────────
 
   /** Get index status (document counts, collections, embedding state) */
@@ -1035,6 +1038,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
       chunkStrategy: embedOpts?.chunkStrategy,
       onProgress: embedOpts?.onProgress,
     })),
+    countTokens: (text) => admit("countTokens", async () => llm.countTokens(text)),
 
     // Index Health
     getStatus: () => admit("getStatus", async () => internal.getStatus()),

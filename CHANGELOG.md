@@ -26,6 +26,10 @@
   Each option wins over its environment variable, so two stores in one
   process can use different settings.
 
+- `countTokens()` returns the token count of the store's embedding model, the
+  count `embed()` uses to size chunks. A caller that sizes its own text to
+  the chunk limit needs no access to QMD's internal modules.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
