@@ -26,3 +26,7 @@ test.each([undefined, 25, 0])("store idle timeout %s controls model disposal", a
   expect(disposeContext).toHaveBeenCalledTimes(1);
   expect(disposeModel).toHaveBeenCalledTimes(1);
 });
+
+test.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])("createStore rejects modelIdleTimeoutMs = %s", async (value) => {
+  await expect(createStore({ dbPath: ":memory:", modelIdleTimeoutMs: value })).rejects.toThrow("Invalid modelIdleTimeoutMs");
+});

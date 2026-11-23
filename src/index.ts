@@ -679,6 +679,10 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   if (options.configPath && options.config) {
     throw new Error("Provide either configPath or config, not both");
   }
+  const idleTimeout = options.modelIdleTimeoutMs;
+  if (idleTimeout !== undefined && (!Number.isInteger(idleTimeout) || idleTimeout < 0)) {
+    throw new Error(`Invalid modelIdleTimeoutMs: ${idleTimeout}. Must be a non-negative integer.`);
+  }
 
   // Each store owns its own configuration scope. A YAML or inline source is
   // bound to this store for its lifetime, so another store created in the same

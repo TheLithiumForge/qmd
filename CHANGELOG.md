@@ -6,7 +6,8 @@
 
 - `createStore({ modelIdleTimeoutMs })` sets how long a store keeps its local
   models loaded after the last call. It defaults to five minutes, as before.
-  Zero keeps them loaded until `close()`.
+  Zero keeps them loaded until `close()`, and `createStore()` rejects a value
+  that isn't a non-negative integer.
 
 ### Fixed
 
