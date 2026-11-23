@@ -53,6 +53,7 @@ import {
   deleteLLMCache,
   deleteInactiveDocuments,
   clearAllEmbeddings,
+  formatQueryForEmbedding,
   type Store as InternalStore,
   type DocumentResult,
   type DocumentNotFound,
@@ -292,6 +293,8 @@ export interface VectorSearchOptions {
   includeBody?: boolean;
   /** Defaults to true. False skips path context lookup. */
   includeContext?: boolean;
+  /** Query embedding from embedQuery(), using this store's embedding model. Skips embedding the query again. */
+  embedding?: number[];
   limit?: number;
   collection?: string | string[];
   /** Metadata filter — every returned result satisfies it */
@@ -361,6 +364,9 @@ export interface QMDStore {
 
   /** Vector similarity search (embedding model, no reranking) */
   searchVector(query: string, options?: VectorSearchOptions): Promise<SearchResult[]>;
+
+  /** Embed a query once, with the model's query instruction, for reuse across searchVector() calls */
+  embedQuery(query: string, options?: { signal?: AbortSignal }): Promise<number[] | null>;
 
   /** Expand a query into typed sub-searches (lex/vec/hyde) for manual control */
   expandQuery(query: string, options?: ExpandQueryOptions): Promise<ExpandedQuery[]>;
@@ -820,9 +826,14 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     searchVector: (q, opts) => admit("searchVector", async () => {
       const filter = opts?.filter === undefined ? undefined : parseMetadataFilter(opts.filter);
       return withLLMSessionForLlm(llm, session =>
-        internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection, session, undefined, filter, opts),
+        internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection, session, opts?.embedding, filter, opts),
         { signal: opts?.signal, name: "searchVector" });
     }),
+    embedQuery: (q, opts) => admit("embedQuery", async () =>
+      withLLMSessionForLlm(llm, async session => {
+        const result = await session.embed(formatQueryForEmbedding(q, llm.embedModelName), { model: llm.embedModelName, isQuery: true });
+        return result?.embedding ?? null;
+      }, { signal: opts?.signal, name: "embedQuery" })),
     expandQuery: (q) => admit("expandQuery", async () => internal.expandQuery(q)),
     get: (pathOrDocid, opts) => admit("get", async () => internal.findDocument(pathOrDocid, opts)),
     getDocumentBody: (pathOrDocid, opts) => admit("getDocumentBody", async () => {

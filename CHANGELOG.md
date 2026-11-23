@@ -8,6 +8,10 @@
   Set either to `false` to skip loading bodies or path contexts when a caller
   needs only paths and scores. Both default to `true`.
 
+- `embedQuery()` embeds a query once with the model's query instruction, and
+  `searchVector()` takes the result as `embedding`. A caller that searches
+  several collections, or asks for more hits, embeds the query only once.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
