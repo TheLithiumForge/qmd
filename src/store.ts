@@ -1826,7 +1826,7 @@ export type Store = {
   toVirtualPath: (absolutePath: string) => string | null;
 
   // Search
-  searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions) => SearchResult[];
+  searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions & LexQueryOptions) => SearchResult[];
   searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], filter?: MetadataFilter, options?: SearchHydrationOptions) => Promise<SearchResult[]>;
 
   // Query expansion & reranking
@@ -3191,7 +3191,7 @@ export function createStore(dbPath?: string, options: { readOnly?: boolean; busy
     toVirtualPath: (absolutePath: string) => toVirtualPath(db, absolutePath),
 
     // Search
-    searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions) => searchFTS(db, query, limit, collectionName, filter, options),
+    searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions & LexQueryOptions) => searchFTS(db, query, limit, collectionName, filter, options),
     searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], filter?: MetadataFilter, options?: SearchHydrationOptions) => searchVec(db, query, model, limit, collectionName, session, precomputedEmbedding, getLlm(store), filter, options),
 
     // Query expansion & reranking
@@ -5257,7 +5257,7 @@ function splitFTS5CompoundTerm(term: string): string[] {
  *   "DEC-0054"              → "dec 0054"
  *   src/lib/i18n.ts         → "src lib i18n ts"
  */
-function buildFTS5Query(query: string): string | null {
+function buildFTS5Query(query: string, anyTerm = false): string | null {
   const positive: string[] = [];
   const negative: string[] = [];
 
@@ -5333,8 +5333,8 @@ function buildFTS5Query(query: string): string | null {
   // If only negative terms, we can't search (FTS5 NOT is binary)
   if (positive.length === 0) return null;
 
-  // Join positive terms with AND
-  let result = positive.join(' AND ');
+  // Join positive terms with AND, or with OR in parentheses so a NOT applies to every term
+  let result = anyTerm && positive.length > 1 ? `(${positive.join(' OR ')})` : positive.join(' AND ');
 
   // Add NOT clause for negative terms
   for (const neg of negative) {
@@ -5385,11 +5385,14 @@ function compareFilepaths(a: { filepath: string }, b: { filepath: string }): num
 
 export type SearchHydrationOptions = { includeBody?: boolean; includeContext?: boolean };
 
-export function searchFTS(db: Database, query: string, limit: number = 20, collectionName?: string | readonly string[], filter?: MetadataFilter, options: SearchHydrationOptions = {}): SearchResult[] {
+/** `anyTerm` joins the query's terms with OR, so BM25 adds up the terms a document matches. */
+export type LexQueryOptions = { anyTerm?: boolean };
+
+export function searchFTS(db: Database, query: string, limit: number = 20, collectionName?: string | readonly string[], filter?: MetadataFilter, options: SearchHydrationOptions & LexQueryOptions = {}): SearchResult[] {
   const includeBody = options.includeBody !== false;
   const names = scopedCollectionNames(collectionName);
 
-  const ftsQuery = buildFTS5Query(query);
+  const ftsQuery = buildFTS5Query(query, options.anyTerm);
   if (!ftsQuery) return [];
 
   // Use a CTE to force FTS5 to run first, then filter by collection.

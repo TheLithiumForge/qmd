@@ -280,6 +280,12 @@ export interface LexSearchOptions {
   includeBody?: boolean;
   /** Defaults to true. False skips path context lookup. */
   includeContext?: boolean;
+  /**
+   * Match documents with any term of the query instead of all of them (default: false).
+   * BM25 then adds up the terms each document matches, so a natural-language
+   * question finds documents that share some of its words.
+   */
+  anyTerm?: boolean;
   limit?: number;
   collection?: string | string[];
   /** Metadata filter — every returned result satisfies it */
