@@ -15,7 +15,7 @@ import { openDatabase, loadSqliteVec } from "./db.js";
 import type { Database } from "./db.js";
 import picomatch from "picomatch";
 import { createHash } from "crypto";
-import { readFileSync, realpathSync, statSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync, mkdirSync } from "node:fs";
 // Note: node:path resolve is not imported — we export our own cross-platform resolve()
 import fastGlob from "fast-glob";
 import { qmdHomedir } from "./paths.js";
@@ -1178,7 +1178,34 @@ function rebuildFTSForCjkNormalization(db: Database): void {
   }
 }
 
-function initializeDatabase(db: Database): void {
+const STORE_TABLES = ["content", "documents", "documents_fts", "content_vectors", "llm_cache", "store_collections", "store_config"];
+const readOnlyDatabases = new WeakSet<Database>();
+
+/**
+ * Open an existing index without write access. A reader creates and migrates
+ * nothing, so a missing file or table fails here instead of on the first query.
+ */
+function openReadOnlyDatabase(path: string): Database {
+  if (!existsSync(path)) {
+    throw new Error(`Read-only store: no database at ${path}`);
+  }
+  const db = openDatabase(path, { readOnly: true });
+  try {
+    const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as { name: string }[];
+    const tables = new Set(rows.map(row => row.name));
+    const missing = STORE_TABLES.filter(name => !tables.has(name));
+    if (missing.length > 0) {
+      throw new Error(`Read-only store: ${path} has no ${missing.join(", ")} table. Open it once without readOnly to create the schema.`);
+    }
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+  readOnlyDatabases.add(db);
+  return db;
+}
+
+function initializeDatabase(db: Database, readOnly = false): void {
   try {
     loadSqliteVec(db);
     verifySqliteVecLoaded(db);
@@ -1190,6 +1217,7 @@ function initializeDatabase(db: Database): void {
     _sqliteVecUnavailableReason = getErrorMessage(err);
     console.warn(_sqliteVecUnavailableReason);
   }
+  if (readOnly) return;
   db.exec("PRAGMA foreign_keys = ON");
 
   // Drop legacy tables that are now managed in YAML
@@ -2271,12 +2299,13 @@ export async function generateEmbeddings(
  * If no path is provided, uses the default path (~/.cache/qmd/index.sqlite).
  *
  * @param dbPath - Path to the SQLite database file
+ * @param options.readOnly - Open an existing index without write access. No table is created or migrated.
  * @returns Store instance with all methods bound to the database
  */
-export function createStore(dbPath?: string): Store {
+export function createStore(dbPath?: string, options: { readOnly?: boolean } = {}): Store {
   const resolvedPath = dbPath || getDefaultDbPath();
-  const db = openDatabase(resolvedPath);
-  initializeDatabase(db);
+  const db = options.readOnly ? openReadOnlyDatabase(resolvedPath) : openDatabase(resolvedPath);
+  initializeDatabase(db, options.readOnly);
 
   const store: Store = {
     db,
@@ -2695,6 +2724,7 @@ export function getCachedResult(db: Database, cacheKey: string): string | null {
 }
 
 export function setCachedResult(db: Database, cacheKey: string, result: string): void {
+  if (readOnlyDatabases.has(db)) return; // a read-only store reads the cache but never fills it
   const now = new Date().toISOString();
   db.prepare(`INSERT OR REPLACE INTO llm_cache (hash, result, created_at) VALUES (?, ?, ?)`).run(cacheKey, result, now);
   if (Math.random() < 0.01) {
@@ -4538,6 +4568,7 @@ export async function expandQuery(query: string, model: string = DEFAULT_QUERY_M
  * would replay the same misses on every warm repeat of the query.
  */
 export function deleteExpansionCacheEntry(db: Database, query: string, model: string = DEFAULT_QUERY_MODEL): void {
+  if (readOnlyDatabases.has(db)) return;
   const cacheKey = getCacheKey("expandQuery", { query, model });
   db.prepare(`DELETE FROM llm_cache WHERE hash = ?`).run(cacheKey);
 }
