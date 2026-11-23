@@ -1375,11 +1375,11 @@ const readOnlyDatabases = new WeakSet<Database>();
  * nothing, so a missing file, a missing table or an older schema fails here
  * instead of on the first query.
  */
-function openReadOnlyDatabase(path: string): Database {
+function openReadOnlyDatabase(path: string, busyTimeoutMs?: number): Database {
   if (!existsSync(path)) {
     throw new Error(`Read-only store: no database at ${path}`);
   }
-  const db = openDatabase(path, { readOnly: true });
+  const db = openDatabase(path, { readOnly: true, busyTimeoutMs });
   try {
     const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as { name: string }[];
     const tables = new Set(rows.map(row => row.name));
@@ -3141,11 +3141,14 @@ async function embedWithIndexLockHeld(
  *
  * @param dbPath - Path to the SQLite database file
  * @param options.readOnly - Open an existing index without write access. No table is created or migrated.
+ * @param options.busyTimeoutMs - SQLite busy timeout in milliseconds. Takes precedence over QMD_SQLITE_BUSY_TIMEOUT.
  * @returns Store instance with all methods bound to the database
  */
-export function createStore(dbPath?: string, options: { readOnly?: boolean } = {}): Store {
+export function createStore(dbPath?: string, options: { readOnly?: boolean; busyTimeoutMs?: number } = {}): Store {
   const resolvedPath = dbPath || getDefaultDbPath();
-  const db = options.readOnly ? openReadOnlyDatabase(resolvedPath) : openDatabase(resolvedPath);
+  const db = options.readOnly
+    ? openReadOnlyDatabase(resolvedPath, options.busyTimeoutMs)
+    : openDatabase(resolvedPath, { busyTimeoutMs: options.busyTimeoutMs });
   initializeDatabase(db, options.readOnly);
 
   const store: Store = {

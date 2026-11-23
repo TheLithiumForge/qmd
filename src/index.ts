@@ -322,7 +322,7 @@ export interface ExpandQueryOptions {
  */
 export type StoreLlmOptions = Pick<
   LlamaCppConfig,
-  "modelCacheDir" | "skipDownload" | "gpu" | "embedParallelism" | "embedContextSize"
+  "modelCacheDir" | "skipDownload" | "gpu" | "embedParallelism" | "embedContextSize" | "allowInCI"
 >;
 
 /**
@@ -346,7 +346,7 @@ export interface StoreOptions {
   config?: CollectionConfig;
   /** Model idle timeout in milliseconds. Defaults to five minutes. Zero keeps models loaded until close(). */
   modelIdleTimeoutMs?: number;
-  /** Model runtime settings for this store: cache folder, downloads, device and embedding contexts */
+  /** Model runtime settings for this store: cache folder, downloads, device, embedding contexts and model operations while CI is set */
   llm?: StoreLlmOptions;
   /**
    * Open an existing index without write access. Nothing is created, migrated
@@ -355,6 +355,12 @@ export interface StoreOptions {
    * missing table or an older schema fails at open.
    */
   readOnly?: boolean;
+  /**
+   * SQLite busy timeout in milliseconds: how long a statement waits for a lock
+   * that another connection holds. Takes precedence over QMD_SQLITE_BUSY_TIMEOUT.
+   * Defaults to 120000. Zero fails at once.
+   */
+  busyTimeoutMs?: number;
 }
 
 /**
@@ -754,7 +760,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     inactivityTimeoutMs: options.modelIdleTimeoutMs ?? 5 * 60 * 1000,
     disposeModelsOnInactivity: true,
   });
-  const internal = createStoreInternal(options.dbPath, { readOnly: options.readOnly });
+  const internal = createStoreInternal(options.dbPath, { readOnly: options.readOnly, busyTimeoutMs: options.busyTimeoutMs });
   const db = internal.db;
 
   // Seed SQLite from the configuration that is authoritative now, read under
