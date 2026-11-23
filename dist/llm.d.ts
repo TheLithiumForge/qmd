@@ -272,6 +272,11 @@ export type LlamaCppConfig = {
      * memory reclaim.
      */
     disposeModelsOnInactivity?: boolean;
+    /**
+     * Run model operations while the CI environment variable is set (default: false).
+     * Without it, embedBatch, generate, expandQuery and rerank throw in CI.
+     */
+    allowInCI?: boolean;
 };
 export type LlamaGpuMode = "auto" | "metal" | "vulkan" | "cuda" | false;
 type ParallelismOptions = {

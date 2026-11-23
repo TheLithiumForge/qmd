@@ -1,9 +1,9 @@
 # Rune changes
-The Rune QMD fork is a QMD 2.8.3 build that gives Rune scoped retrieval, file updates, per-store model settings and read-only stores through the SDK.
+The Rune QMD fork is a QMD 2.8.3 build that gives Rune scoped retrieval, file updates, per-store settings and read-only stores through the SDK.
 
 Rune searches separate document and section collections. For example, it can embed a query once, search both collections without loading bodies or contexts, then refresh one changed file without scanning either collection.
 
-Status: Nine SDK changes built from `v2.8.3` (`facd35e`).
+Status: Ten SDK changes built from `v2.8.3` (`facd35e`).
 
 ## Changes
 
@@ -20,6 +20,7 @@ Each topic branch starts at `v2.8.3` and has one change commit. `rune/v2.8.3` me
 | Store options | `createStore({ llm })` sets the model cache folder, downloads, the device, the embedding parallelism and the embedding context size for one store. Each option wins over its environment variable | `rune/feat-store-runtime-options` | `test/store-runtime-options.test.ts` checks three stores with different options in one process, the variables that still apply and invalid values |
 | Store tokenizer | `embed()` counts chunk tokens with the store's model object instead of the global default. `countTokens()` gives a caller the same count | `rune/fix-store-tokenizer` | `test/store-tokenizer.test.ts` checks chunk sizes against a different global default and the counts of two stores |
 | Read-only store | `createStore({ readOnly: true })` opens an existing index without write access. It creates no table and syncs no config | `rune/feat-read-only-store` | `test/read-only-store.test.ts` checks two readers beside a writer that holds the write lock, rejected writes and a missing database or table |
+| CI and busy timeout | `createStore({ llm: { allowInCI: true } })` runs model calls while `CI` is set. `createStore({ busyTimeoutMs })` sets the SQLite busy timeout for one store. Each option wins over its environment variable | `rune/feat-store-ci-and-busy-options` | `test/store-ci-and-busy-options.test.ts` checks the four guarded model calls with and without `CI` and the option, the timeout from the default, the variable and the option, two stores on one database and invalid values |
 
 ## Targeted updates
 
@@ -54,7 +55,7 @@ const store = await createStore({
 }); // embeds on the CPU with two contexts and never downloads
 ```
 
-The `llm` group takes five options:
+The `llm` group takes six options:
 
 | Option | Variable | Meaning |
 | --- | --- | --- |
@@ -63,6 +64,7 @@ The `llm` group takes five options:
 | `gpu` | `QMD_LLAMA_GPU`, `QMD_FORCE_CPU` | `"auto"`, `"metal"`, `"vulkan"`, `"cuda"` or `false` for CPU only |
 | `embedParallelism` | `QMD_EMBED_PARALLELISM` | Number of parallel embedding contexts, capped at 8 |
 | `embedContextSize` | `QMD_EMBED_CONTEXT_SIZE` | Embedding context size in tokens |
+| `allowInCI` | `CI` | `true` runs embedding, generation, query expansion and reranking while `CI` is set. Defaults to `false`, so these calls throw in CI |
 
 An option wins over its variable. If you omit an option, its variable or the default still applies. `embedParallelism` and `embedContextSize` take positive integers, and `createStore()` rejects any other value.
 
@@ -71,6 +73,20 @@ Three more variables need no option:
 - `QMD_EMBED_MODEL` - `config.models.embed` already sets the embedding model for one store.
 - `QMD_CONFIG_DIR` - a store reads its collections from `config`, `configPath` or the database, never from the default config folder.
 - `NODE_LLAMA_CPP_SKIP_DOWNLOAD` - QMD passes a `skipDownload` value to node-llama-cpp on every load, so the variable doesn't change how a store loads. Set the `skipDownload` option instead.
+
+Pass `busyTimeoutMs` to `createStore()` to set the SQLite busy timeout for one store: how long a statement waits for a lock that another connection holds. It sits beside `dbPath`, since it sets the database connection and not the model runtime.
+
+Illustrative:
+
+```ts
+const store = await createStore({
+  dbPath: "./index.sqlite",
+  busyTimeoutMs: 5_000,
+  llm: { allowInCI: true },
+}); // embeds in a CI job and waits up to 5 s for a lock that another connection holds
+```
+
+`busyTimeoutMs` wins over `QMD_SQLITE_BUSY_TIMEOUT`. Without either, it defaults to 120,000 ms. Zero fails at once. It applies to writable and read-only stores. It takes a non-negative integer, and `createStore()` rejects any other value.
 
 ## Store tokenizer
 
@@ -116,7 +132,7 @@ Run `npm run test:types`, `npm run test:node` with `CI=1`, and `npm run build`. 
 
 The unchanged Windows baseline passes typecheck and build. Its Node suite reports 1,021 passed, 71 failed, 129 skipped and two `spawn sleep ENOENT` errors across 43 test files. Failures include Windows path handling, POSIX commands, symlinks and daemon fixtures. Compare later runs with this baseline before assigning a failure to a fork change.
 
-The fork passes typecheck and build. Its Node suite reports 1,043 passed, the same 71 failed tests, 129 skipped and the same two spawn errors across 52 test files. All 22 added tests pass. The already failing path-fidelity suite also reports an `EBUSY` error while deleting its temporary database during cleanup.
+The fork passes typecheck and build. Its Node suite reports 1,056 passed, the same 71 failed tests, 129 skipped and the same two spawn errors across 53 test files. All 35 added tests pass. The already failing path-fidelity suite also reports an `EBUSY` error while deleting its temporary database during cleanup.
 
 These counts come from PowerShell. Git Bash has a `sleep` command, so three of the 71 tests pass there and the two spawn errors go away.
 
@@ -124,7 +140,7 @@ These counts come from PowerShell. Git Bash has a `sleep` command, so three of t
 
 Rune pins a commit from [TheLithiumForge/qmd](https://github.com/TheLithiumForge/qmd). The dependency keeps the `@tobilu/qmd` package name, so SDK imports stay the same.
 
-`rune/release-v2.8.3-next` adds the JavaScript and declarations built from `rune/v2.8.3-next` at `0873ef6`. It omits `prepare`, so installing the dependency needs neither checkout hooks nor a package-local TypeScript compiler. `test/install-hooks.test.ts` checks this release contract. The source branch keeps QMD's developer setup.
+`rune/release-v2.8.3-next` adds the JavaScript and declarations built from `rune/v2.8.3-next` at `93606d2`. It omits `prepare`, so installing the dependency needs neither checkout hooks nor a package-local TypeScript compiler. `test/install-hooks.test.ts` checks this release contract. The source branch keeps QMD's developer setup.
 
 On Windows x64, Bun 1.3.14 installs the source commit without running its untrusted `prepare` script, leaving `dist/` absent. The script also expects a package-local compiler that this install lacks. The release branch gives all six targets the same JavaScript and declarations. Native dependencies still come from each target's existing packages. Installation on the other five targets needs platform CI.
 

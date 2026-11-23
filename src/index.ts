@@ -233,7 +233,7 @@ export interface ExpandQueryOptions {
  */
 export type StoreLlmOptions = Pick<
   LlamaCppConfig,
-  "modelCacheDir" | "skipDownload" | "gpu" | "embedParallelism" | "embedContextSize"
+  "modelCacheDir" | "skipDownload" | "gpu" | "embedParallelism" | "embedContextSize" | "allowInCI"
 >;
 
 /**
@@ -252,7 +252,7 @@ export interface StoreOptions {
   configPath?: string;
   /** Inline collection config (mutually exclusive with `configPath`) */
   config?: CollectionConfig;
-  /** Model runtime settings for this store: cache folder, downloads, device and embedding contexts */
+  /** Model runtime settings for this store: cache folder, downloads, device, embedding contexts and model operations while CI is set */
   llm?: StoreLlmOptions;
   /**
    * Open an existing index without write access. Nothing is created, migrated
@@ -261,6 +261,12 @@ export interface StoreOptions {
    * table fails at open.
    */
   readOnly?: boolean;
+  /**
+   * SQLite busy timeout in milliseconds: how long a statement waits for a lock
+   * that another connection holds. Takes precedence over QMD_SQLITE_BUSY_TIMEOUT.
+   * Defaults to 120000. Zero fails at once.
+   */
+  busyTimeoutMs?: number;
 }
 
 /**
@@ -406,7 +412,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   }
 
   // Create the internal store (opens DB, creates tables unless read-only)
-  const internal = createStoreInternal(options.dbPath, { readOnly: options.readOnly });
+  const internal = createStoreInternal(options.dbPath, { readOnly: options.readOnly, busyTimeoutMs: options.busyTimeoutMs });
   const db = internal.db;
 
   // Track whether we have a YAML config path for write-through

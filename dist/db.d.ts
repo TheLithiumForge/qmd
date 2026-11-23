@@ -34,9 +34,13 @@ export type SQLiteParams = readonly SQLiteValue[];
  *
  * `readOnly` opens an existing database without write access. The file is not
  * created and its journal mode is left as it is.
+ *
+ * `busyTimeoutMs` sets the timeout for this connection and takes precedence
+ * over `QMD_SQLITE_BUSY_TIMEOUT`.
  */
 export declare function openDatabase(path: string, options?: {
     readOnly?: boolean;
+    busyTimeoutMs?: number;
 }): Database;
 /**
  * Common subset of the Database interface used throughout QMD.

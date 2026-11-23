@@ -59,7 +59,7 @@ export async function createStore(options) {
         throw new Error("Provide either configPath or config, not both");
     }
     // Create the internal store (opens DB, creates tables unless read-only)
-    const internal = createStoreInternal(options.dbPath, { readOnly: options.readOnly });
+    const internal = createStoreInternal(options.dbPath, { readOnly: options.readOnly, busyTimeoutMs: options.busyTimeoutMs });
     const db = internal.db;
     // Track whether we have a YAML config path for write-through
     const hasYamlConfig = !!options.configPath;

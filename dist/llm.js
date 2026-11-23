@@ -470,7 +470,7 @@ const failedGpuInitModes = new Set();
 let noGpuAccelerationWarningShown = false;
 let cpuForcedPrebuiltFallbackWarningShown = false;
 export class LlamaCpp {
-    _ciMode = !!process.env.CI;
+    _ciMode;
     llama = null;
     embedModel = null;
     embedModelPath = null;
@@ -521,6 +521,7 @@ export class LlamaCpp {
         this.expandContextSize = resolveExpandContextSize(config.expandContextSize);
         this.inactivityTimeoutMs = config.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
         this.disposeModelsOnInactivity = config.disposeModelsOnInactivity ?? false;
+        this._ciMode = !!process.env.CI && !config.allowInCI;
     }
     get embedModelName() {
         return this.embedModelUri;

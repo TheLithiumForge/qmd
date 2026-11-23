@@ -417,10 +417,12 @@ export declare function generateEmbeddings(store: Store, options?: EmbedOptions)
  *
  * @param dbPath - Path to the SQLite database file
  * @param options.readOnly - Open an existing index without write access. No table is created or migrated.
+ * @param options.busyTimeoutMs - SQLite busy timeout in milliseconds. Takes precedence over QMD_SQLITE_BUSY_TIMEOUT.
  * @returns Store instance with all methods bound to the database
  */
 export declare function createStore(dbPath?: string, options?: {
     readOnly?: boolean;
+    busyTimeoutMs?: number;
 }): Store;
 /**
  * Unified document result type with all metadata.

@@ -84,6 +84,17 @@ function enableWal(db, budgetMs) {
         }
     }
 }
+function resolveBusyTimeoutMs(option) {
+    if (option !== undefined) {
+        if (!Number.isInteger(option) || option < 0) {
+            throw new Error(`Invalid busyTimeoutMs: ${option}. Must be a non-negative integer.`);
+        }
+        return option;
+    }
+    const raw = process.env.QMD_SQLITE_BUSY_TIMEOUT;
+    const parsed = raw !== undefined && raw !== "" ? Number(raw) : Number.NaN;
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 120_000;
+}
 /**
  * Open a SQLite database. Works with both bun:sqlite and better-sqlite3.
  *
@@ -105,12 +116,13 @@ function enableWal(db, budgetMs) {
  *
  * `readOnly` opens an existing database without write access. The file is not
  * created and its journal mode is left as it is.
+ *
+ * `busyTimeoutMs` sets the timeout for this connection and takes precedence
+ * over `QMD_SQLITE_BUSY_TIMEOUT`.
  */
 export function openDatabase(path, options = {}) {
+    const busyTimeoutMs = resolveBusyTimeoutMs(options.busyTimeoutMs);
     const db = (options.readOnly ? new _Database(path, { readonly: true }) : new _Database(path));
-    const raw = process.env.QMD_SQLITE_BUSY_TIMEOUT;
-    const parsed = raw !== undefined && raw !== "" ? Number(raw) : Number.NaN;
-    const busyTimeoutMs = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 120_000;
     db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
     if (!options.readOnly)
         enableWal(db, busyTimeoutMs);
