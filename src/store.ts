@@ -1789,8 +1789,8 @@ export type Store = {
   toVirtualPath: (absolutePath: string) => string | null;
 
   // Search
-  searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter) => SearchResult[];
-  searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], filter?: MetadataFilter) => Promise<SearchResult[]>;
+  searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions) => SearchResult[];
+  searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], filter?: MetadataFilter, options?: SearchHydrationOptions) => Promise<SearchResult[]>;
 
   // Query expansion & reranking
   expandQuery: (query: string, model?: string) => Promise<ExpandedQuery[]>;
@@ -3125,8 +3125,8 @@ export function createStore(dbPath?: string): Store {
     toVirtualPath: (absolutePath: string) => toVirtualPath(db, absolutePath),
 
     // Search
-    searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter) => searchFTS(db, query, limit, collectionName, filter),
-    searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], filter?: MetadataFilter) => searchVec(db, query, model, limit, collectionName, session, precomputedEmbedding, getLlm(store), filter),
+    searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions) => searchFTS(db, query, limit, collectionName, filter, options),
+    searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], filter?: MetadataFilter, options?: SearchHydrationOptions) => searchVec(db, query, model, limit, collectionName, session, precomputedEmbedding, getLlm(store), filter, options),
 
     // Query expansion & reranking
     expandQuery: (query: string, model?: string) => expandQuery(query, model ?? store.llm?.generateModelName ?? DEFAULT_QUERY_MODEL, db, store.llm),
@@ -5307,7 +5307,10 @@ function compareFilepaths(a: { filepath: string }, b: { filepath: string }): num
   return a.filepath < b.filepath ? -1 : a.filepath > b.filepath ? 1 : 0;
 }
 
-export function searchFTS(db: Database, query: string, limit: number = 20, collectionName?: string | readonly string[], filter?: MetadataFilter): SearchResult[] {
+export type SearchHydrationOptions = { includeBody?: boolean; includeContext?: boolean };
+
+export function searchFTS(db: Database, query: string, limit: number = 20, collectionName?: string | readonly string[], filter?: MetadataFilter, options: SearchHydrationOptions = {}): SearchResult[] {
+  const includeBody = options.includeBody !== false;
   const names = scopedCollectionNames(collectionName);
 
   const ftsQuery = buildFTS5Query(query);
@@ -5343,7 +5346,7 @@ export function searchFTS(db: Database, query: string, limit: number = 20, colle
       'qmd://' || d.collection || '/' || d.path as filepath,
       d.collection || '/' || d.path as display_path,
       d.title,
-      ${cappedBodySql("content.doc")} as body,
+      ${includeBody ? cappedBodySql("content.doc") : "NULL"} as body,
       d.hash,
       fm.bm25_score,
       dm.metadata_json
@@ -5372,7 +5375,7 @@ export function searchFTS(db: Database, query: string, limit: number = 20, colle
   sql += ` ORDER BY fm.bm25_score ASC, filepath ASC LIMIT ?`;
   params.push(limit);
 
-  const rows = db.prepare(sql).all(...params) as { filepath: string; display_path: string; title: string; body: string; hash: string; bm25_score: number; metadata_json: string | null }[];
+  const rows = db.prepare(sql).all(...params) as { filepath: string; display_path: string; title: string; body: string | null; hash: string; bm25_score: number; metadata_json: string | null }[];
   return rows.map(row => {
     const collectionName = row.filepath.split('//')[1]?.split('/')[0] || "";
     // Convert bm25 (negative, lower is better) into a stable [0..1) score where higher is better.
@@ -5388,9 +5391,9 @@ export function searchFTS(db: Database, query: string, limit: number = 20, colle
       docid: getDocid(row.hash),
       collectionName,
       modifiedAt: "",  // Not available in FTS query
-      bodyLength: row.body.length,
-      body: row.body,
-      context: getContextForFile(db, row.filepath),
+      bodyLength: row.body?.length ?? 0,
+      body: row.body ?? undefined,
+      context: options.includeContext === false ? null : getContextForFile(db, row.filepath),
       metadata: parseMetadataJson(row.metadata_json),
       score,
       source: "fts" as const,
@@ -5607,7 +5610,7 @@ function assertRemoteEmbeddingBoundary(db: Database, model: string, collectionNa
   if (foreign) throw new Error("Vector space mismatch; re-embed the selected collections with the configured model");
 }
 
-export async function searchVec(db: Database, query: string, model: string, limit: number = 20, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], llm?: LlamaCpp, filter?: MetadataFilter): Promise<SearchResult[]> {
+export async function searchVec(db: Database, query: string, model: string, limit: number = 20, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], llm?: LlamaCpp, filter?: MetadataFilter, options: SearchHydrationOptions = {}): Promise<SearchResult[]> {
   if (!hasVectorIndex(db)) return [];
   // No read transaction spans HTTP. Fail before paying for a query, then
   // recheck after the await in the SAME snapshot as KNN and document resolution.
@@ -5619,12 +5622,13 @@ export async function searchVec(db: Database, query: string, model: string, limi
   return db.transaction(() => {
     if (!hasVectorIndex(db)) return [];
     assertRemoteEmbeddingBoundary(db, model, collectionName, filter);
-    return searchVecSnapshot(db, embedding, limit, collectionName, filter);
+    return searchVecSnapshot(db, embedding, limit, collectionName, filter, options);
   })();
 }
 
 /** Synchronous reads only; called inside the post-embedding read transaction. */
-function searchVecSnapshot(db: Database, embedding: number[], limit: number, collectionName?: string | readonly string[], filter?: MetadataFilter): SearchResult[] {
+function searchVecSnapshot(db: Database, embedding: number[], limit: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options: SearchHydrationOptions = {}): SearchResult[] {
+  const includeBody = options.includeBody !== false;
   const names = scopedCollectionNames(collectionName);
   let collectionIds: number[] | undefined;
   if (names) {
@@ -5650,8 +5654,9 @@ function searchVecSnapshot(db: Database, embedding: number[], limit: number, col
   const resolve = vecDocumentResolver(db, filter);
   const queryVec = new Float32Array(embedding);
   // Bodies are capped at BODY_CAP_CHARS, as in searchFTS, so a large document cannot
-  // put its whole text on the heap for each result.
-  const bodyOf = db.prepare(`SELECT ${cappedBodySql("doc")} AS doc FROM content WHERE hash = ?`);
+  // put its whole text on the heap for each result. Without the body, the lookup
+  // still drops a hit whose content row is missing, as the join in searchFTS does.
+  const bodyOf = db.prepare(`SELECT ${includeBody ? cappedBodySql("doc") : "NULL"} AS doc FROM content WHERE hash = ?`);
 
   // Each target yields its own nearest `limit` documents (or all it holds), so
   // merging them by distance gives the scope's exact nearest `limit`. Ties go
@@ -5662,9 +5667,9 @@ function searchVecSnapshot(db: Database, embedding: number[], limit: number, col
     .slice(0, limit)
     .flatMap((row): SearchResult[] => {
       // Body, vector, metadata and context reads share the search snapshot.
-      const content = bodyOf.get(row.hash) as { doc: string } | null | undefined;
+      const content = bodyOf.get(row.hash) as { doc: string | null } | null | undefined;
       if (content == null) return [];
-      const body = content.doc;
+      const body = content.doc ?? undefined;
       const collectionName = row.filepath.split('//')[1]?.split('/')[0] || "";
       return [{
         filepath: row.filepath,
@@ -5674,9 +5679,9 @@ function searchVecSnapshot(db: Database, embedding: number[], limit: number, col
         docid: getDocid(row.hash),
         collectionName,
         modifiedAt: "",  // Not available in vec query
-        bodyLength: body.length,
+        bodyLength: body?.length ?? 0,
         body,
-        context: getContextForFile(db, row.filepath),
+        context: options.includeContext === false ? null : getContextForFile(db, row.filepath),
         metadata: parseMetadataJson(row.metadata_json),
         score: 1 - row.distance,  // Cosine similarity = 1 - cosine distance
         source: "vec" as const,

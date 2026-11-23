@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `searchLex()` and `searchVector()` take `includeBody` and `includeContext`.
+  Set either to `false` to skip loading bodies or path contexts when a caller
+  needs only paths and scores. Both default to `true`, and the hits are the
+  same with either setting.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.

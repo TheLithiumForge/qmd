@@ -273,6 +273,10 @@ export interface SearchOptions {
  * Options for searchLex() — BM25 keyword search.
  */
 export interface LexSearchOptions {
+  /** Defaults to true. False skips content hydration and reports bodyLength 0. */
+  includeBody?: boolean;
+  /** Defaults to true. False skips path context lookup. */
+  includeContext?: boolean;
   limit?: number;
   collection?: string | string[];
   /** Metadata filter — every returned result satisfies it */
@@ -284,6 +288,10 @@ export interface LexSearchOptions {
  */
 export interface VectorSearchOptions {
   signal?: AbortSignal;
+  /** Defaults to true. False skips content hydration and reports bodyLength 0. */
+  includeBody?: boolean;
+  /** Defaults to true. False skips path context lookup. */
+  includeContext?: boolean;
   limit?: number;
   collection?: string | string[];
   /** Metadata filter — every returned result satisfies it */
@@ -807,12 +815,12 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     }),
     searchLex: (q, opts) => admit("searchLex", async () => {
       const filter = opts?.filter === undefined ? undefined : parseMetadataFilter(opts.filter);
-      return internal.searchFTS(q, opts?.limit, opts?.collection, filter);
+      return internal.searchFTS(q, opts?.limit, opts?.collection, filter, opts);
     }),
     searchVector: (q, opts) => admit("searchVector", async () => {
       const filter = opts?.filter === undefined ? undefined : parseMetadataFilter(opts.filter);
       return withLLMSessionForLlm(llm, session =>
-        internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection, session, undefined, filter),
+        internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection, session, undefined, filter, opts),
         { signal: opts?.signal, name: "searchVector" });
     }),
     expandQuery: (q) => admit("expandQuery", async () => internal.expandQuery(q)),
