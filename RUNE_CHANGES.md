@@ -3,7 +3,7 @@ The Rune release of QMD is a build of upstream `main` with ten changes that give
 
 E.g. Rune embeds a query once, searches its document and section collections without loading bodies or contexts, then refreshes one changed file without scanning either collection.
 
-Status: Built from `rune/main` at `63698b0`. `rune/main` is upstream `main` at `8be0c42` (QMD 2.9.0 and two commits) with one squash commit per change and five review follow-ups.
+Status: Built from `rune/main` at `76dc1e6`. `rune/main` is upstream `main` at `8be0c42` (QMD 2.9.0 and two commits) with one squash commit per change and six review follow-ups.
 
 ## Changes
 
@@ -28,13 +28,14 @@ The orphan cleanup fix makes `update()` fast again on a large index. Since upstr
 
 ## Review follow-ups
 
-A review of the ten pull requests led to five more commits. Each one is a commit on its `pr/` branch and a follow-up on `rune/main`, whose subject names the pull request:
+A review of the ten pull requests led to six more commits. Each one is a commit on its `pr/` branch and a follow-up on `rune/main`, whose subject names the pull request:
 
 | Pull request | Follow-up on `rune/main` | Change |
 | --- | --- | --- |
 | [#2](https://github.com/TheLithiumForge/qmd/pull/2) | `1ce31fb` | Both searches drop a hit without a `content` row, also without the body |
 | [#3](https://github.com/TheLithiumForge/qmd/pull/3) | `e3dc207` | Tests that `close()` waits for `embedQuery()` and an abort signal fails it |
 | [#4](https://github.com/TheLithiumForge/qmd/pull/4) | `216bb42` | `createStore()` rejects an invalid `modelIdleTimeoutMs` |
+| [#4](https://github.com/TheLithiumForge/qmd/pull/4) | `76dc1e6` | `modelIdleTimeoutMs` stops at 2,147,483,647 ms, the largest delay a timer takes |
 | [#10](https://github.com/TheLithiumForge/qmd/pull/10) | `08b3be0` | The changelog bullet joins the Fixed list |
 | [#11](https://github.com/TheLithiumForge/qmd/pull/11) | `63698b0` | A test that a quoted phrase stays a phrase with `anyTerm` |
 
@@ -59,6 +60,6 @@ Run `npm run test:types`, `npm run build` and `npm run test:node` with `CI=1` in
 
 Upstream `main` passes the typecheck and the build. Its Node suite reports 1,584 passed, 122 failed and 138 skipped tests across 79 test files, and two `spawn sleep ENOENT` errors. Most failures are in the CLI, shell script, daemon and cross-process lock suites.
 
-`rune/main` passes the typecheck of the build and of the whole project, the build and `oxlint`. Its Node suite reports 1,628 passed tests, the same 122 failed tests, 138 skipped tests and the same two errors across 89 test files. All 44 added tests pass.
+At `63698b0`, `rune/main` passes the typecheck of the build and of the whole project, the build and `oxlint`. Its Node suite reports 1,628 passed tests, the same 122 failed tests, 138 skipped tests and the same two errors across 89 test files. All 44 added tests pass. At `76dc1e6`, the cap of #4 adds two test cases. The typecheck, the build, `oxlint` and its focused test pass there, and the full suite didn't run again.
 
 These counts come from PowerShell. Git Bash has a `sleep` command, which changes the counts.

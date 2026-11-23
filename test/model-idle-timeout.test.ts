@@ -27,6 +27,11 @@ test.each([undefined, 25, 0])("store idle timeout %s controls model disposal", a
   expect(disposeModel).toHaveBeenCalledTimes(1);
 });
 
-test.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])("createStore rejects modelIdleTimeoutMs = %s", async (value) => {
+test.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648])("createStore rejects modelIdleTimeoutMs = %s", async (value) => {
   await expect(createStore({ dbPath: ":memory:", modelIdleTimeoutMs: value })).rejects.toThrow("Invalid modelIdleTimeoutMs");
+});
+
+test("createStore accepts the largest delay a timer takes", async () => {
+  const store = await createStore({ dbPath: ":memory:", modelIdleTimeoutMs: 2_147_483_647 });
+  await store.close();
 });

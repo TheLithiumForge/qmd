@@ -196,9 +196,11 @@ export async function createStore(options) {
     if (options.configPath && options.config) {
         throw new Error("Provide either configPath or config, not both");
     }
+    // setTimeout() fires after 1 ms for a delay above 2^31 - 1 ms, so a larger
+    // timeout would unload the models right away.
     const idleTimeout = options.modelIdleTimeoutMs;
-    if (idleTimeout !== undefined && (!Number.isInteger(idleTimeout) || idleTimeout < 0)) {
-        throw new Error(`Invalid modelIdleTimeoutMs: ${idleTimeout}. Must be a non-negative integer.`);
+    if (idleTimeout !== undefined && (!Number.isInteger(idleTimeout) || idleTimeout < 0 || idleTimeout > 2_147_483_647)) {
+        throw new Error(`Invalid modelIdleTimeoutMs: ${idleTimeout}. Must be an integer from 0 to 2147483647.`);
     }
     // Each store owns its own configuration scope. A YAML or inline source is
     // bound to this store for its lifetime, so another store created in the same
