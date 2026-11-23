@@ -333,6 +333,8 @@ export interface StoreOptions {
   configPath?: string;
   /** Inline collection config owned by this store (mutually exclusive with `configPath`) */
   config?: CollectionConfig;
+  /** Model idle timeout in milliseconds. Defaults to five minutes. Zero keeps models loaded until close(). */
+  modelIdleTimeoutMs?: number;
 }
 
 /**
@@ -707,14 +709,14 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   const configuredConfig: CollectionConfig | undefined = configScope?.load();
 
   // Create a per-store LlamaCpp instance — lazy-loads models on first use,
-  // auto-unloads after 5 min inactivity to free VRAM.
+  // auto-unloads after the idle timeout (default 5 min) to free VRAM.
   const llm = new LlamaCpp({
     embedModel: configuredConfig?.models?.embed,
     embedOptions: configuredConfig?.models?.embedOptions,
     generateModel: configuredConfig?.models?.generate,
     rerankModel: configuredConfig?.models?.rerank,
     rerankOptions: configuredConfig?.models?.rerankOptions,
-    inactivityTimeoutMs: 5 * 60 * 1000,
+    inactivityTimeoutMs: options.modelIdleTimeoutMs ?? 5 * 60 * 1000,
     disposeModelsOnInactivity: true,
   });
   const internal = createStoreInternal(options.dbPath);
