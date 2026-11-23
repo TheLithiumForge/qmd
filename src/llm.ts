@@ -19,7 +19,7 @@ type NodeLlamaCppModule = {
   getLlamaGpuTypes?: (include?: "supported" | "allValid") => Promise<LlamaGpuMode[]>;
   resolveModelFile: (
     model: string,
-    optionsOrDirectory?: string | { directory?: string; cli?: boolean },
+    optionsOrDirectory?: string | { directory?: string; cli?: boolean; download?: "auto" | false },
   ) => Promise<string>;
   LlamaChatSession: new (options: { contextSequence: unknown }) => {
     prompt: (prompt: string, options?: Record<string, unknown>) => Promise<string>;
@@ -601,7 +601,19 @@ export type LlamaCppConfig = {
   embedModel?: string;
   generateModel?: string;
   rerankModel?: string;
+  /** Folder for downloaded model files. Default: the qmd/models folder under XDG_CACHE_HOME or ~/.cache. */
   modelCacheDir?: string;
+  /**
+   * Never download (default: false). A model file missing from the cache fails
+   * to resolve, and llama.cpp is neither downloaded nor built from source.
+   */
+  skipDownload?: boolean;
+  /** GPU backend, or false for CPU only. Takes precedence over QMD_LLAMA_GPU and QMD_FORCE_CPU. */
+  gpu?: LlamaGpuMode;
+  /** Number of parallel embedding contexts, capped at 8. Takes precedence over QMD_EMBED_PARALLELISM. */
+  embedParallelism?: number;
+  /** Embedding context size in tokens. Takes precedence over QMD_EMBED_CONTEXT_SIZE. */
+  embedContextSize?: number;
   /**
    * Context size used for query expansion generation contexts.
    * Default: 2048. Can also be set via QMD_EXPAND_CONTEXT_SIZE.
@@ -792,13 +804,16 @@ function resolveExpandContextSize(configValue?: number): number {
   return parsed;
 }
 
+function requirePositiveInteger(name: string, value: number | undefined): number | undefined {
+  if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
+    throw new Error(`Invalid ${name}: ${value}. Must be a positive integer.`);
+  }
+  return value;
+}
+
 const failedGpuInitModes = new Set<LlamaGpuMode>();
 let noGpuAccelerationWarningShown = false;
 let cpuForcedPrebuiltFallbackWarningShown = false;
-
-function isCpuModeRequested(): boolean {
-  return resolveLlamaGpuMode() === false;
-}
 
 export class LlamaCpp implements LLM {
   private readonly _ciMode = !!process.env.CI;
@@ -814,6 +829,10 @@ export class LlamaCpp implements LLM {
   private generateModelUri: string;
   private rerankModelUri: string;
   private modelCacheDir: string;
+  private skipDownload: boolean;
+  private gpu: LlamaGpuMode | undefined;
+  private embedParallelism: number | undefined;
+  private embedContextSize: number;
   private expandContextSize: number;
 
   // Ensure we don't load the same model/context concurrently (which can allocate duplicate VRAM).
@@ -848,6 +867,10 @@ export class LlamaCpp implements LLM {
     this.generateModelUri = resolveGenerateModel({ generate: config.generateModel });
     this.rerankModelUri = resolveRerankModel({ rerank: config.rerankModel });
     this.modelCacheDir = config.modelCacheDir || MODEL_CACHE_DIR;
+    this.skipDownload = config.skipDownload ?? false;
+    this.gpu = config.gpu;
+    this.embedParallelism = requirePositiveInteger("embedParallelism", config.embedParallelism);
+    this.embedContextSize = requirePositiveInteger("embedContextSize", config.embedContextSize) ?? LlamaCpp.EMBED_CONTEXT_SIZE;
     this.expandContextSize = resolveExpandContextSize(config.expandContextSize);
     this.inactivityTimeoutMs = config.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
     this.disposeModelsOnInactivity = config.disposeModelsOnInactivity ?? false;
@@ -985,9 +1008,9 @@ export class LlamaCpp implements LLM {
 
   private async loadLlamaRuntime(allowBuild = true): Promise<Llama> {
     if (!this.llama) {
-      const gpuMode = resolveLlamaGpuMode();
+      const gpuMode = this.resolveGpuMode();
       // Skip source build when install dir is read-only (e.g. NixOS store).
-      const canBuild = allowBuild && canWriteLlamaDir();
+      const canBuild = allowBuild && !this.skipDownload && canWriteLlamaDir();
 
       const { getLlama, getLlamaGpuTypes, LlamaLogLevel } = await loadNodeLlamaCpp();
       const loadLlama = async (gpu: LlamaGpuMode, sourceBuildAllowed = canBuild, buildOverride?: "auto" | "never") =>
@@ -1079,8 +1102,12 @@ export class LlamaCpp implements LLM {
     return this.llama;
   }
 
+  private resolveGpuMode(): LlamaGpuMode {
+    return this.gpu ?? resolveLlamaGpuMode();
+  }
+
   private isCpuOffloadForced(): boolean {
-    return isCpuModeRequested();
+    return this.resolveGpuMode() === false;
   }
 
   private modelLoadOptions(modelPath: string): { modelPath: string; gpuLayers?: number } {
@@ -1099,7 +1126,10 @@ export class LlamaCpp implements LLM {
     this.ensureModelCacheDir();
     // resolveModelFile handles HF URIs and downloads to the cache dir
     const { resolveModelFile } = await loadNodeLlamaCpp();
-    const modelPath = await resolveModelFile(modelUri, resolveModelFileArgs(this.modelCacheDir));
+    const modelPath = await resolveModelFile(modelUri, {
+      ...resolveModelFileArgs(this.modelCacheDir),
+      ...(this.skipDownload ? { download: false as const } : {}),
+    });
     validateGgufFile(modelPath, modelUri);
     return modelPath;
   }
@@ -1143,6 +1173,7 @@ export class LlamaCpp implements LLM {
    *      half the math cores, with at least 4 threads per context.
    */
   private async computeParallelism(perContextMB: number, reserveMB = 0): Promise<number> {
+    if (this.embedParallelism !== undefined) return Math.min(8, this.embedParallelism);
     const llama = await this.ensureLlama();
 
     if (!this.isCpuOffloadForced() && llama.gpu) {
@@ -1200,7 +1231,7 @@ export class LlamaCpp implements LLM {
         try {
           perContextMB = estimateEmbedContextMB({
             modelBytes: statSync(this.embedModelPath).size,
-            contextSize: LlamaCpp.EMBED_CONTEXT_SIZE,
+            contextSize: this.embedContextSize,
           });
         } catch {
           // Keep the baseline if the file cannot be stat'd.
@@ -1211,7 +1242,7 @@ export class LlamaCpp implements LLM {
       for (let i = 0; i < n; i++) {
         try {
           this.embedContexts.push(await model.createEmbeddingContext({
-            contextSize: LlamaCpp.EMBED_CONTEXT_SIZE,
+            contextSize: this.embedContextSize,
             ...(threads > 0 ? { threads } : {}),
           }));
         } catch {
@@ -1419,15 +1450,15 @@ export class LlamaCpp implements LLM {
   private resolveEmbedTokenLimit(): number {
     const trainedContextSize = this.embedModel?.trainContextSize;
     if (typeof trainedContextSize === "number" && Number.isFinite(trainedContextSize) && trainedContextSize > 0) {
-      return Math.max(1, Math.min(LlamaCpp.EMBED_CONTEXT_SIZE, trainedContextSize));
+      return Math.max(1, Math.min(this.embedContextSize, trainedContextSize));
     }
-    return LlamaCpp.EMBED_CONTEXT_SIZE;
+    return this.embedContextSize;
   }
 
   private async truncateToContextSize(
     text: string
   ): Promise<{ text: string; truncated: boolean; limit: number }> {
-    if (!this.embedModel) return { text, truncated: false, limit: LlamaCpp.EMBED_CONTEXT_SIZE };
+    if (!this.embedModel) return { text, truncated: false, limit: this.embedContextSize };
 
     const maxTokens = this.resolveEmbedTokenLimit();
     if (maxTokens <= 0) return { text, truncated: false, limit: maxTokens };
