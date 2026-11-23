@@ -1,0 +1,78 @@
+/**
+ * db.ts - Cross-runtime SQLite compatibility layer
+ *
+ * Provides a unified Database export that works under both Bun (bun:sqlite)
+ * and Node.js (better-sqlite3). The APIs are nearly identical — the main
+ * difference is the import path.
+ *
+ * On macOS, Apple's system SQLite is compiled with SQLITE_OMIT_LOAD_EXTENSION,
+ * which prevents loading native extensions like sqlite-vec. When running under
+ * Bun we call Database.setCustomSQLite() to swap in Homebrew's full-featured
+ * SQLite build before creating any database instances.
+ */
+export declare const isBun: boolean;
+export type SQLiteValue = string | number | bigint | Buffer | Uint8Array | Float32Array | null;
+export type SQLiteParams = readonly SQLiteValue[];
+/** True for SQLite's lock-contention errors (`SQLITE_BUSY*`, "database is locked"). */
+export declare function isBusyError(err: unknown): boolean;
+/** Synchronous sleep, for callers that must retry without yielding the event loop. */
+export declare function sleepSync(ms: number): void;
+/**
+ * Open a SQLite database. Works with both bun:sqlite and better-sqlite3.
+ *
+ * `bun:sqlite` and `better-sqlite3` both default `busy_timeout` to 0, so
+ * concurrent writers throw `SQLITE_BUSY` instead of waiting. WAL improves
+ * read-while-write concurrency but does not serialise writers. Setting the
+ * timeout at connection open makes parallel processes (e.g. an `update` or
+ * `query` racing a long `embed`, or a first-open schema migration racing any
+ * routine command) queue at batch boundaries instead of failing on contact.
+ *
+ * WAL is enabled here too (with a bounded retry) so connection-level pragmas
+ * live in one place and the cold-database journal migration survives concurrent
+ * opens.
+ *
+ * Default 120_000 ms outlasts the worst-case batch commit on a multi-GB
+ * index. Override with `QMD_SQLITE_BUSY_TIMEOUT` (value in milliseconds; `0`
+ * restores the upstream fail-fast behaviour). See
+ * https://bun.sh/docs/api/sqlite#busy-timeout.
+ *
+ * `readOnly` opens an existing database without write access. The file is not
+ * created and its journal mode is left as it is.
+ *
+ * `busyTimeoutMs` sets the timeout for this connection and takes precedence
+ * over `QMD_SQLITE_BUSY_TIMEOUT`.
+ */
+export declare function openDatabase(path: string, options?: {
+    readOnly?: boolean;
+    busyTimeoutMs?: number;
+}): Database;
+/**
+ * Common subset of the Database interface used throughout QMD.
+ */
+export interface Database {
+    /** Both drivers expose it; true while a transaction or savepoint is open. */
+    readonly inTransaction: boolean;
+    exec(sql: string): void;
+    prepare(sql: string): Statement;
+    loadExtension(path: string): void;
+    transaction<T extends (...args: SQLiteValue[]) => unknown>(fn: T): T & {
+        immediate: T;
+    };
+    close(): void;
+}
+export interface Statement {
+    run(...params: SQLiteValue[]): {
+        changes: number;
+        lastInsertRowid: number | bigint;
+    };
+    get<T = unknown>(...params: SQLiteValue[]): T | undefined;
+    all<T = unknown>(...params: SQLiteValue[]): T[];
+    iterate<T = unknown>(...params: SQLiteValue[]): IterableIterator<T>;
+}
+/**
+ * Load the sqlite-vec extension into a database.
+ *
+ * Throws with platform-specific fix instructions when the extension is
+ * unavailable.
+ */
+export declare function loadSqliteVec(db: Database): void;
