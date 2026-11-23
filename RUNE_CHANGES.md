@@ -1,9 +1,9 @@
 # Rune changes
-The Rune release of QMD is a build of upstream `main` with eight SDK changes that give Rune searches without bodies, reusable query embeddings, file updates, per-store settings and read-only stores.
+The Rune release of QMD is a build of upstream `main` with ten changes that give Rune searches without bodies, reusable query embeddings, file updates, per-store settings, read-only stores, a fast vector cleanup and keyword search on any term.
 
 E.g. Rune embeds a query once, searches its document and section collections without loading bodies or contexts, then refreshes one changed file without scanning either collection.
 
-Status: Built from `rune/main` at `05234e3`. `rune/main` is upstream `main` at `8be0c42` (QMD 2.9.0 and two commits) with one squash commit per change.
+Status: Built from `rune/main` at `d348d60`. `rune/main` is upstream `main` at `8be0c42` (QMD 2.9.0 and two commits) with one squash commit per change.
 
 ## Changes
 
@@ -19,8 +19,12 @@ Each change has its own branch from `main` and an open pull request against `mai
 | Token count | [#7](https://github.com/TheLithiumForge/qmd/pull/7) | `pr/store-tokenizer` | `test/store-tokenizer.test.ts` |
 | Read-only store | [#8](https://github.com/TheLithiumForge/qmd/pull/8) | `pr/read-only-store` | `test/read-only-store.test.ts` |
 | CI and busy timeout | [#9](https://github.com/TheLithiumForge/qmd/pull/9) | `pr/store-ci-and-busy-options` | `test/store-ci-and-busy-options.test.ts` |
+| Orphan cleanup by hash | [#10](https://github.com/TheLithiumForge/qmd/pull/10) | `pr/orphan-cleanup-index` | `test/orphan-cleanup-index.test.ts` |
+| Any-term keyword search | [#11](https://github.com/TheLithiumForge/qmd/pull/11) | `pr/lex-any-term` | `test/lex-any-term.test.ts` |
 
 The pull request of each change says what it does, why it helps any library user and how it was tested. The busy timeout pull request works on `main` alone. On `rune/main`, a read-only store takes `busyTimeoutMs` too.
+
+The orphan cleanup fix makes `update()` fast again on a large index. Since upstream #1024, every `update()` ran a cleanup that read a whole collection for each vector row. On Rune's test index, one targeted update took about 25 s, and an edited file missed the 5 s keyword limit of the acceptance harness.
 
 ## Changes upstream covers
 
@@ -41,6 +45,6 @@ Run `npm run test:types`, `npm run build` and `npm run test:node` with `CI=1` in
 
 Upstream `main` passes the typecheck and the build. Its Node suite reports 1,584 passed, 122 failed and 138 skipped tests across 79 test files, and two `spawn sleep ENOENT` errors. Most failures are in the CLI, shell script, daemon and cross-process lock suites.
 
-`rune/main` passes the typecheck of the build and of the whole project, the build and `oxlint`. Its Node suite reports 1,619 passed tests, the same 122 failed tests, 138 skipped tests and the same two errors across 87 test files. All 35 added tests pass.
+`rune/main` passes the typecheck of the build and of the whole project, the build and `oxlint`. Its Node suite reports 1,621 passed tests, the same 122 failed tests, 138 skipped tests and the same two errors across 89 test files. All 37 added tests pass.
 
 These counts come from PowerShell. Git Bash has a `sleep` command, which changes the counts.

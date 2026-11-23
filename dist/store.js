@@ -2846,6 +2846,16 @@ export function countOrphanedVectors(db) {
     }
 }
 /**
+ * True for a vector row `vr` of collection `ci` that no active document of
+ * that collection references. Without table statistics, SQLite looks
+ * `documents` up by its (collection, active) index, which reads the whole
+ * collection for every vector row. The unary + leaves that term out of index
+ * selection, so the lookup goes by hash and reads only that hash's documents.
+ */
+const ORPHANED_VECTOR_ROW_SQL = `NOT EXISTS (
+  SELECT 1 FROM documents d WHERE d.hash = vr.hash AND +d.collection = ci.name AND d.active = 1
+)`;
+/**
  * Remove vector rows whose (hash, collection) no active document references,
  * and the content_vectors rows of hashes no active document references at
  * all. Returns the number of orphaned chunks deleted.
@@ -2873,9 +2883,7 @@ export function cleanupOrphanedVectors(db) {
             const orphanRows = db.prepare(`
         SELECT vr.id FROM ${VEC_ROWS_TABLE} vr
         JOIN ${VEC_COLLECTION_IDS_TABLE} ci ON ci.id = vr.collection_id
-        WHERE NOT EXISTS (
-          SELECT 1 FROM documents d WHERE d.hash = vr.hash AND d.collection = ci.name AND d.active = 1
-        )
+        WHERE ${ORPHANED_VECTOR_ROW_SQL}
       `).all();
             const orphanedChunks = db.prepare(ORPHANED_VECTOR_COUNT_SQL).get().c;
             if (orphanRows.length === 0 && orphanedChunks === 0) {
@@ -2929,7 +2937,7 @@ function vectorRepackPlan(db, dropOrphans = false) {
       FROM ${VEC_ROWS_TABLE} vr
       JOIN ${VEC_COLLECTION_IDS_TABLE} ci ON ci.id = vr.collection_id
       JOIN ${layout.shadow.rowids} r ON r.rowid = vr.id
-      WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.hash = vr.hash AND d.collection = ci.name AND d.active = 1)
+      WHERE ${ORPHANED_VECTOR_ROW_SQL}
       GROUP BY r.chunk_id
     `).all();
         for (const row of rows)
@@ -4107,7 +4115,7 @@ function splitFTS5CompoundTerm(term) {
  *   "DEC-0054"              → "dec 0054"
  *   src/lib/i18n.ts         → "src lib i18n ts"
  */
-function buildFTS5Query(query) {
+function buildFTS5Query(query, anyTerm = false) {
     const positive = [];
     const negative = [];
     let i = 0;
@@ -4187,8 +4195,8 @@ function buildFTS5Query(query) {
     // If only negative terms, we can't search (FTS5 NOT is binary)
     if (positive.length === 0)
         return null;
-    // Join positive terms with AND
-    let result = positive.join(' AND ');
+    // Join positive terms with AND, or with OR in parentheses so a NOT applies to every term
+    let result = anyTerm && positive.length > 1 ? `(${positive.join(' OR ')})` : positive.join(' AND ');
     // Add NOT clause for negative terms
     for (const neg of negative) {
         result = `${result} NOT ${neg}`;
@@ -4231,7 +4239,7 @@ function compareFilepaths(a, b) {
 export function searchFTS(db, query, limit = 20, collectionName, filter, options = {}) {
     const includeBody = options.includeBody !== false;
     const names = scopedCollectionNames(collectionName);
-    const ftsQuery = buildFTS5Query(query);
+    const ftsQuery = buildFTS5Query(query, options.anyTerm);
     if (!ftsQuery)
         return [];
     // Use a CTE to force FTS5 to run first, then filter by collection.

@@ -295,7 +295,7 @@ export type Store = {
     isVirtualPath: typeof isVirtualPath;
     resolveVirtualPath: (virtualPath: string) => string | null;
     toVirtualPath: (absolutePath: string) => string | null;
-    searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions) => SearchResult[];
+    searchFTS: (query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions & LexQueryOptions) => SearchResult[];
     searchVec: (query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], filter?: MetadataFilter, options?: SearchHydrationOptions) => Promise<SearchResult[]>;
     expandQuery: (query: string, model?: string) => Promise<ExpandedQuery[]>;
     /** Drop the cached expansion for a query so the next call regenerates. */
@@ -1051,7 +1051,11 @@ export type SearchHydrationOptions = {
     includeBody?: boolean;
     includeContext?: boolean;
 };
-export declare function searchFTS(db: Database, query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions): SearchResult[];
+/** `anyTerm` joins the query's terms with OR, so BM25 adds up the terms a document matches. */
+export type LexQueryOptions = {
+    anyTerm?: boolean;
+};
+export declare function searchFTS(db: Database, query: string, limit?: number, collectionName?: string | readonly string[], filter?: MetadataFilter, options?: SearchHydrationOptions & LexQueryOptions): SearchResult[];
 export declare function searchVec(db: Database, query: string, model: string, limit?: number, collectionName?: string | readonly string[], session?: ILLMSession, precomputedEmbedding?: number[], llm?: LlamaCpp, filter?: MetadataFilter, options?: SearchHydrationOptions): Promise<SearchResult[]>;
 /**
  * Get all unique content hashes that need embeddings (from active documents).
