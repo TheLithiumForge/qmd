@@ -310,6 +310,9 @@ export interface QMDStore {
     onProgress?: (info: EmbedProgress) => void;
   }): Promise<EmbedResult>;
 
+  /** Count tokens with this store's embedding model, the way embed() sizes chunks */
+  countTokens(text: string): Promise<number>;
+
   // ── Index Health ────────────────────────────────────────────────────
 
   /** Get index status (document counts, collections, embedding state) */
@@ -541,6 +544,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         onProgress: embedOpts?.onProgress,
       });
     },
+    countTokens: async (text) => llm.countTokens(text),
 
     // Index Health
     getStatus: async () => internal.getStatus(),
