@@ -6,7 +6,8 @@
 
 - `searchLex()` and `searchVector()` take `includeBody` and `includeContext`.
   Set either to `false` to skip loading bodies or path contexts when a caller
-  needs only paths and scores. Both default to `true`.
+  needs only paths and scores. Both default to `true`, and the hits are the
+  same with either setting.
 
 ### Fixed
 
