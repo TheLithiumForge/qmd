@@ -2225,11 +2225,12 @@ export async function generateEmbeddings(
  * If no path is provided, uses the default path (~/.cache/qmd/index.sqlite).
  *
  * @param dbPath - Path to the SQLite database file
+ * @param options.busyTimeoutMs - SQLite busy timeout in milliseconds. Takes precedence over QMD_SQLITE_BUSY_TIMEOUT.
  * @returns Store instance with all methods bound to the database
  */
-export function createStore(dbPath?: string): Store {
+export function createStore(dbPath?: string, options: { busyTimeoutMs?: number } = {}): Store {
   const resolvedPath = dbPath || getDefaultDbPath();
-  const db = openDatabase(resolvedPath);
+  const db = openDatabase(resolvedPath, { busyTimeoutMs: options.busyTimeoutMs });
   initializeDatabase(db);
 
   const store: Store = {

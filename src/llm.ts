@@ -622,6 +622,11 @@ export type LlamaCppConfig = {
    * memory reclaim.
    */
   disposeModelsOnInactivity?: boolean;
+  /**
+   * Run model operations while the CI environment variable is set (default: false).
+   * Without it, embedBatch, generate, expandQuery and rerank throw in CI.
+   */
+  allowInCI?: boolean;
 };
 
 /**
@@ -801,7 +806,7 @@ function isCpuModeRequested(): boolean {
 }
 
 export class LlamaCpp implements LLM {
-  private readonly _ciMode = !!process.env.CI;
+  private readonly _ciMode: boolean;
   private llama: Llama | null = null;
   private embedModel: LlamaModel | null = null;
   private embedModelPath: string | null = null;
@@ -851,6 +856,7 @@ export class LlamaCpp implements LLM {
     this.expandContextSize = resolveExpandContextSize(config.expandContextSize);
     this.inactivityTimeoutMs = config.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
     this.disposeModelsOnInactivity = config.disposeModelsOnInactivity ?? false;
+    this._ciMode = !!process.env.CI && !config.allowInCI;
   }
 
   get embedModelName(): string {
