@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `createStore({ readOnly: true })` opens an existing index without write
+  access. It creates no table and syncs no config, so several readers can
+  search one index while a writer updates it. Calls that write reject with an
+  error that names the call.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
