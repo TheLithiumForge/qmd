@@ -2141,6 +2141,10 @@ export async function reindexCollection(
     ignorePatterns?: string[];
     processor?: DocumentProcessor;
     signal?: AbortSignal;
+    /** Files to index, relative to the collection. With `changed` or `removed`, the collection is not scanned. */
+    changed?: string[];
+    /** Files to deactivate, relative to the collection. */
+    removed?: string[];
     /**
      * Called synchronously from inside the scan's write-batch transaction.
      * Statements it runs join that transaction by design (they commit or roll
@@ -2182,6 +2186,8 @@ async function reindexCollectionIn(
     ignorePatterns?: string[];
     processor?: DocumentProcessor;
     signal?: AbortSignal;
+    changed?: string[];
+    removed?: string[];
     onProgress?: (info: ReindexProgress) => void;
   }
 ): Promise<ReindexResult> {
@@ -2213,13 +2219,19 @@ async function reindexCollectionIn(
     };
   }
 
-  const allFiles: string[] = await fastGlob(splitGlobMask(globPattern), {
-    cwd: collectionPath,
-    onlyFiles: true,
-    followSymbolicLinks: false,
-    dot: false,
-    ignore: allIgnore,
-  });
+  // A targeted update reads only the named files that the glob and ignore rules allow.
+  const targeted = options?.changed !== undefined || options?.removed !== undefined;
+  const isIncluded = picomatch(splitGlobMask(globPattern));
+  const isIgnored = picomatch(allIgnore);
+  const allFiles: string[] = targeted
+    ? [...new Set(options?.changed ?? [])].filter(file => isIncluded(file) && !isIgnored(file))
+    : await fastGlob(splitGlobMask(globPattern), {
+      cwd: collectionPath,
+      onlyFiles: true,
+      followSymbolicLinks: false,
+      dot: false,
+      ignore: allIgnore,
+    });
   // Filter hidden files/folders
   const files = allFiles.filter(file => {
     const parts = file.split("/");
@@ -2227,6 +2239,8 @@ async function reindexCollectionIn(
   });
 
   if (options?.processor) {
+    // A processor retires every source missing from its file list.
+    if (targeted) throw new Error("reindexCollection: changed and removed need a collection without a processor");
     // A processor is arbitrary in-process code. A scan it starts on this store
     // would wait for the slot this one holds, so it is rejected - but only that
     // processor's own call chain carries the context; independent callers queue.
@@ -2240,7 +2254,12 @@ async function reindexCollectionIn(
   let indexed = 0, updated = 0, unchanged = 0, processed = 0, metadataErrors = 0;
   const skippedFiles: ReindexSkippedFile[] = [];
   const seenPaths = new Set<string>();
-  const livePaths = new Set(files.map(f => normalizePathSeparators(f)));
+  // A targeted update sees only the named files, so every indexed path counts
+  // as live and no legacy row of an unlisted file is adopted.
+  const livePaths = new Set([
+    ...files.map(f => normalizePathSeparators(f)),
+    ...(targeted ? getActiveDocumentPaths(db, collectionName) : []),
+  ]);
 
   // Load file_sync_state for this collection (mtime+size fast-path)
   const syncStateMap = getFileSyncStateMap(db, collectionName);
@@ -2263,6 +2282,8 @@ async function reindexCollectionIn(
     try {
       stat = statSync(filepath);
     } catch (err) {
+      // A named file that can't be read is not indexed, so `removed` can still deactivate it.
+      if (targeted) seenPaths.delete(path);
       processed++;
       skippedFiles.push({ file: relativeFile, code: fsErrorCode(err) });
       options?.onProgress?.({ file: relativeFile, current: processed, total });
@@ -2308,6 +2329,7 @@ async function reindexCollectionIn(
     try {
       content = readFileSync(filepath, "utf-8");
     } catch (err) {
+      if (targeted) seenPaths.delete(path);
       processed++;
       skippedFiles.push({ file: relativeFile, code: fsErrorCode(err) });
       options?.onProgress?.({ file: relativeFile, current: processed, total });
@@ -2387,10 +2409,13 @@ async function reindexCollectionIn(
   }
 
   // Deactivate documents that no longer exist + cleanup sync_state
-  const allActive = getActiveDocumentPaths(db, collectionName);
+  const allActive = targeted
+    ? [...new Set((options?.removed ?? []).map(normalizePathSeparators))]
+    : getActiveDocumentPaths(db, collectionName);
   let removed = 0;
   for (const path of allActive) {
     if (!seenPaths.has(path)) {
+      if (targeted && !findActiveDocument(db, collectionName, path)) continue;
       batch.next();
       deactivateDocument(db, collectionName, path);
       deleteFileSyncStateForCollection(db, collectionName, path);

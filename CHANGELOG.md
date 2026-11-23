@@ -16,6 +16,11 @@
   models loaded after the last call. It defaults to five minutes, as before.
   Zero keeps them loaded until `close()`.
 
+- `update({ changed, removed })` reads and deactivates only the named files,
+  without scanning any collection folder. A watcher or editor that knows which
+  files changed no longer pays for a scan of every file. Vector copy and
+  cleanup run as in a full update.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
