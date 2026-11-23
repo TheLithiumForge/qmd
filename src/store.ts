@@ -2282,6 +2282,8 @@ async function reindexCollectionIn(
     try {
       stat = statSync(filepath);
     } catch (err) {
+      // A named file that can't be read is not indexed, so `removed` can still deactivate it.
+      if (targeted) seenPaths.delete(path);
       processed++;
       skippedFiles.push({ file: relativeFile, code: fsErrorCode(err) });
       options?.onProgress?.({ file: relativeFile, current: processed, total });
@@ -2327,6 +2329,7 @@ async function reindexCollectionIn(
     try {
       content = readFileSync(filepath, "utf-8");
     } catch (err) {
+      if (targeted) seenPaths.delete(path);
       processed++;
       skippedFiles.push({ file: relativeFile, code: fsErrorCode(err) });
       options?.onProgress?.({ file: relativeFile, current: processed, total });

@@ -78,6 +78,17 @@ test.each([1, 3])("removing the last document deletes all %s chunks from both ve
   });
 });
 
+test("a file in both lists is indexed when it exists and deactivated when it doesn't", async () => {
+  await fixture(async (store, root) => {
+    await writeFile(join(root, "a.md"), "# Alpha\nStill here");
+    await rm(join(root, "b.md"));
+    expect(await store.update({ changed: ["a.md", "b.md"], removed: ["a.md", "b.md"] }))
+      .toMatchObject({ updated: 1, removed: 1, skipped: 1 });
+    expect((await store.searchLex("here"))[0]!.filepath).toBe("qmd://docs/a.md");
+    expect(await store.searchLex("bravo")).toEqual([]);
+  });
+});
+
 test("removing one document keeps embeddings referenced by another", async () => {
   await fixture(async (store) => {
     const hash = seedVectors(store);
