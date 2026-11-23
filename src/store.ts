@@ -2134,6 +2134,7 @@ export async function generateEmbeddings(
           doc.path,
           options?.chunkStrategy,
           session.signal,
+          llm,
         );
 
         for (let seq = 0; seq < chunks.length; seq++) {
@@ -2632,7 +2633,7 @@ export async function maybeAdoptLegacyEmbeddingFingerprint(store: Store, model: 
   const llm = getLlm(store);
 
   return await withLLMSessionForLlm(llm, async (session) => {
-    const chunks = await chunkDocumentByTokens(sample.body, undefined, undefined, undefined, sample.path, undefined, session.signal);
+    const chunks = await chunkDocumentByTokens(sample.body, undefined, undefined, undefined, sample.path, undefined, session.signal, llm);
     const chunk = chunks[sample.seq];
     if (!chunk) {
       return { checked: true, adopted: 0, reason: `sample chunk ${expectedHashSeq} no longer exists` };
@@ -3248,6 +3249,8 @@ function stripUnpairedSurrogates(text: string): string {
  *
  * When filepath and chunkStrategy are provided, uses AST-aware break points
  * for supported code files.
+ *
+ * Counts tokens with `llm`. Defaults to the global LlamaCpp instance.
  */
 export async function chunkDocumentByTokens(
   content: string,
@@ -3256,10 +3259,9 @@ export async function chunkDocumentByTokens(
   windowTokens: number = CHUNK_WINDOW_TOKENS,
   filepath?: string,
   chunkStrategy: ChunkStrategy = "regex",
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  llm: LlamaCpp = getDefaultLlamaCpp()
 ): Promise<{ text: string; pos: number; tokens: number }[]> {
-  const llm = getDefaultLlamaCpp();
-
   // Use moderate chars/token estimate (prose ~4, code ~2, mixed ~3)
   // If chunks exceed limit, they'll be re-split with actual ratio
   const avgCharsPerToken = 3;

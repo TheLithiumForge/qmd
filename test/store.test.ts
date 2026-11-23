@@ -4085,6 +4085,7 @@ describe("Embedding batching", () => {
     const embedCalls: { text: string; options?: { model?: string } }[] = [];
     const embedBatchModelCalls: ({ model?: string } | undefined)[] = [];
     return {
+      ...createFakeTokenizer(),
       embedBatchCalls,
       embedCalls,
       embedBatchModelCalls,
@@ -4138,6 +4139,7 @@ describe("Embedding batching", () => {
     // A slow embedder so the short session cap trips between document batches.
     const embedBatchCalls: string[][] = [];
     const slowLlm = {
+      ...createFakeTokenizer(),
       async embed() { return { embedding: [0.1, 0.2, 0.3], model: "fake-embed" }; },
       async embedBatch(texts: string[]) {
         embedBatchCalls.push([...texts]);
@@ -4258,6 +4260,7 @@ describe("Embedding batching", () => {
     const db = store.db;
     let embedCalls = 0;
     const fakeLlm = {
+      ...createFakeTokenizer(),
       async embed(_text: string, _options?: { model?: string }) {
         embedCalls++;
         return embedCalls === 1
@@ -4299,6 +4302,7 @@ describe("Embedding batching", () => {
     const store = await createTestStore();
     const db = store.db;
     const fakeLlm = {
+      ...createFakeTokenizer(),
       async embed(_text: string, _options?: { model?: string }) {
         return { embedding: [0.1, 0.2, 0.3], model: "fake-embed" };
       },
@@ -4364,6 +4368,7 @@ describe("Embedding batching", () => {
     // so vectors_vec is created as float[3].
     const storeModel = "hf:store/embeddinggemma-300M.gguf";
     const storeLlm = {
+      ...createFakeTokenizer(),
       embedModelName: storeModel,
       async embed(_text: string, _options?: { model?: string }) {
         return { embedding: [0.1, 0.2, 0.3], model: storeModel };
@@ -4378,11 +4383,6 @@ describe("Embedding batching", () => {
     // vector against the float[3] table (the reported dim-mismatch symptom).
     let defaultEmbedCalls = 0;
     const defaultLlm = {
-      // Chunking tokenizes via the global default (chunkDocumentByTokens passes
-      // no tokenizer), so the default must provide tokenize.
-      async tokenize(text: string) {
-        return new Array(Math.max(1, Math.ceil(text.length / 16))).fill(1);
-      },
       async embed(_text: string, _options?: { model?: string }) {
         defaultEmbedCalls++;
         return { embedding: [9, 9, 9, 9], model: "env-8b" };

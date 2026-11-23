@@ -966,6 +966,7 @@ describe("embed", () => {
   function createFakeEmbedLlm() {
     const embedBatchCalls: string[][] = [];
     return {
+      ...createFakeTokenizer(),
       embedBatchCalls,
       async embed(_text: string) {
         return { embedding: [0.1, 0.2, 0.3], model: "fake-embed" };
