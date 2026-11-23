@@ -15,7 +15,8 @@
 
 - `createStore({ modelIdleTimeoutMs })` sets how long a store keeps its local
   models loaded after the last call. It defaults to five minutes, as before.
-  Zero keeps them loaded until `close()`.
+  Zero keeps them loaded until `close()`, and `createStore()` rejects a value
+  that isn't a non-negative integer.
 
 - `update({ changed, removed })` reads and deactivates only the named files,
   without scanning any collection folder. A watcher or editor that knows which
