@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `createStore({ llm })` sets the model cache folder, downloads, the device,
+  the embedding parallelism and the embedding context size for one store.
+  Each option wins over its environment variable, so two stores in one
+  process can use different settings.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
