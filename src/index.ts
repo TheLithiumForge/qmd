@@ -348,6 +348,13 @@ export interface StoreOptions {
   modelIdleTimeoutMs?: number;
   /** Model runtime settings for this store: cache folder, downloads, device and embedding contexts */
   llm?: StoreLlmOptions;
+  /**
+   * Open an existing index without write access. Nothing is created, migrated
+   * or synced: collections come from the database, and `config` or `configPath`
+   * only gives the models. Calls that write reject. A missing database, a
+   * missing table or an older schema fails at open.
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -747,7 +754,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     inactivityTimeoutMs: options.modelIdleTimeoutMs ?? 5 * 60 * 1000,
     disposeModelsOnInactivity: true,
   });
-  const internal = createStoreInternal(options.dbPath);
+  const internal = createStoreInternal(options.dbPath, { readOnly: options.readOnly });
   const db = internal.db;
 
   // Seed SQLite from the configuration that is authoritative now, read under
@@ -755,7 +762,8 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   // collection another process published in between, and stamp the stale
   // document's hash over the result. An inline snapshot is process-local: it
   // has no file to serialize on and is applied as given.
-  configScope?.withLockedConfig((authoritative) => syncConfigToDb(db, authoritative));
+  // A read-only store syncs nothing: its config only gives the models.
+  if (!options.readOnly) configScope?.withLockedConfig((authoritative) => syncConfigToDb(db, authoritative));
   internal.llm = llm;
 
   // Every operation this store exposes is admitted here before it touches the
@@ -1047,6 +1055,19 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     // Lifecycle
     close: () => lifecycle.close(teardown),
   };
+
+  if (options.readOnly) {
+    // Reject every call that writes before it reaches SQLite or the config, with an error that names the call.
+    for (const call of [
+      "addCollection", "removeCollection", "renameCollection",
+      "addContext", "removeContext", "setGlobalContext",
+      "update", "embed",
+    ] as const) {
+      store[call] = async () => {
+        throw new Error(`${call}() needs a writable store. This store was opened with readOnly.`);
+      };
+    }
+  }
 
   return store;
 }

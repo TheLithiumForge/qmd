@@ -16,7 +16,7 @@ export const isBun = "Bun" in globalThis;
 export type SQLiteValue = string | number | bigint | Buffer | Uint8Array | Float32Array | null;
 export type SQLiteParams = readonly SQLiteValue[];
 
-type DatabaseConstructor = new (path: string) => Database;
+type DatabaseConstructor = new (path: string, options?: { readonly?: boolean }) => Database;
 type LoadableSqliteDatabase = Pick<Database, "loadExtension">;
 
 let _Database: DatabaseConstructor;
@@ -114,14 +114,17 @@ function enableWal(db: Database, budgetMs: number): void {
  * index. Override with `QMD_SQLITE_BUSY_TIMEOUT` (value in milliseconds; `0`
  * restores the upstream fail-fast behaviour). See
  * https://bun.sh/docs/api/sqlite#busy-timeout.
+ *
+ * `readOnly` opens an existing database without write access. The file is not
+ * created and its journal mode is left as it is.
  */
-export function openDatabase(path: string): Database {
-  const db = new _Database(path) as Database;
+export function openDatabase(path: string, options: { readOnly?: boolean } = {}): Database {
+  const db = (options.readOnly ? new _Database(path, { readonly: true }) : new _Database(path)) as Database;
   const raw = process.env.QMD_SQLITE_BUSY_TIMEOUT;
   const parsed = raw !== undefined && raw !== "" ? Number(raw) : Number.NaN;
   const busyTimeoutMs = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 120_000;
   db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
-  enableWal(db, busyTimeoutMs);
+  if (!options.readOnly) enableWal(db, busyTimeoutMs);
   return db;
 }
 
