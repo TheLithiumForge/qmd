@@ -180,7 +180,14 @@ export function loadConfig(): CollectionConfig {
   }
 
   // File-based config (SDK custom path or default)
-  const configPath = configSource.path || getConfigFilePath();
+  return loadConfigFile(configSource.path || getConfigFilePath());
+}
+
+/**
+ * Read a YAML config file without changing the configured source.
+ * Returns empty config if the file doesn't exist
+ */
+export function loadConfigFile(configPath: string): CollectionConfig {
   if (!existsSync(configPath)) {
     return { collections: {} };
   }

@@ -71,6 +71,7 @@ import {
 import {
   setConfigSource,
   loadConfig,
+  loadConfigFile,
   addCollection as collectionsAddCollection,
   removeCollection as collectionsRemoveCollection,
   renameCollection as collectionsRenameCollection,
@@ -216,6 +217,13 @@ export interface StoreOptions {
   configPath?: string;
   /** Inline collection config (mutually exclusive with `configPath`) */
   config?: CollectionConfig;
+  /**
+   * Open an existing index without write access. Nothing is created, migrated
+   * or synced: collections come from the database, and `config` or `configPath`
+   * only supplies `models`. Calls that write reject. A missing database or
+   * table fails at open.
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -357,8 +365,8 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     throw new Error("Provide either configPath or config, not both");
   }
 
-  // Create the internal store (opens DB, creates tables)
-  const internal = createStoreInternal(options.dbPath);
+  // Create the internal store (opens DB, creates tables unless read-only)
+  const internal = createStoreInternal(options.dbPath, { readOnly: options.readOnly });
   const db = internal.db;
 
   // Track whether we have a YAML config path for write-through
@@ -366,7 +374,10 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
 
   // Sync config into SQLite store_collections
   let config: CollectionConfig | undefined;
-  if (options.configPath) {
+  if (options.readOnly) {
+    // Read-only mode: no sync and no config source, the config only supplies models
+    config = options.configPath ? loadConfigFile(options.configPath) : options.config;
+  } else if (options.configPath) {
     // YAML mode: inject config source for write-through, sync to DB
     setConfigSource({ configPath: options.configPath });
     config = loadConfig();
@@ -550,11 +561,24 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     close: async () => {
       await llm.dispose();
       internal.close();
-      if (hasYamlConfig || options.config) {
+      if (!options.readOnly && (hasYamlConfig || options.config)) {
         setConfigSource(undefined); // Reset config source
       }
     },
   };
+
+  if (options.readOnly) {
+    // Reject every call that writes before it reaches SQLite, with an error that names the call.
+    for (const call of [
+      "addCollection", "removeCollection", "renameCollection",
+      "addContext", "removeContext", "setGlobalContext",
+      "update", "embed",
+    ] as const) {
+      store[call] = async () => {
+        throw new Error(`${call}() needs a writable store. This store was opened with readOnly.`);
+      };
+    }
+  }
 
   return store;
 }
