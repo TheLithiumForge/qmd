@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `createStore({ llm: { allowInCI: true } })` runs embedding, generation,
+  query expansion and reranking while `CI` is set, and
+  `createStore({ busyTimeoutMs })` sets the SQLite busy timeout for one store.
+  Each option wins over its environment variable.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.

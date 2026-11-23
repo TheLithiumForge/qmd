@@ -96,6 +96,18 @@ function enableWal(db: Database, budgetMs: number): void {
   }
 }
 
+function resolveBusyTimeoutMs(option: number | undefined): number {
+  if (option !== undefined) {
+    if (!Number.isInteger(option) || option < 0) {
+      throw new Error(`Invalid busyTimeoutMs: ${option}. Must be a non-negative integer.`);
+    }
+    return option;
+  }
+  const raw = process.env.QMD_SQLITE_BUSY_TIMEOUT;
+  const parsed = raw !== undefined && raw !== "" ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 120_000;
+}
+
 /**
  * Open a SQLite database. Works with both bun:sqlite and better-sqlite3.
  *
@@ -114,12 +126,13 @@ function enableWal(db: Database, budgetMs: number): void {
  * index. Override with `QMD_SQLITE_BUSY_TIMEOUT` (value in milliseconds; `0`
  * restores the upstream fail-fast behaviour). See
  * https://bun.sh/docs/api/sqlite#busy-timeout.
+ *
+ * `busyTimeoutMs` sets the timeout for this connection and takes precedence
+ * over `QMD_SQLITE_BUSY_TIMEOUT`.
  */
-export function openDatabase(path: string): Database {
+export function openDatabase(path: string, options: { busyTimeoutMs?: number } = {}): Database {
+  const busyTimeoutMs = resolveBusyTimeoutMs(options.busyTimeoutMs);
   const db = new _Database(path) as Database;
-  const raw = process.env.QMD_SQLITE_BUSY_TIMEOUT;
-  const parsed = raw !== undefined && raw !== "" ? Number(raw) : Number.NaN;
-  const busyTimeoutMs = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 120_000;
   db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
   enableWal(db, busyTimeoutMs);
   return db;

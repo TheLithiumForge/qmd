@@ -77,6 +77,7 @@ import {
 import {
   LlamaCpp,
   withLLMSessionForLlm,
+  type LlamaCppConfig,
 } from "./llm.js";
 export { RemoteEmbedder } from "./remote-embed.js";
 export type { RemoteEmbedOptions } from "./remote-embed.js";
@@ -304,6 +305,12 @@ export interface ExpandQueryOptions {
 }
 
 /**
+ * Model runtime settings for one store. An option takes precedence over its
+ * environment variable. An omitted option keeps the variable or the default.
+ */
+export type StoreLlmOptions = Pick<LlamaCppConfig, "allowInCI">;
+
+/**
  * Options for creating a QMD store.
  *
  * Provide `dbPath` and optionally `configPath` (YAML file) or `config` (inline).
@@ -322,6 +329,14 @@ export interface StoreOptions {
   configPath?: string;
   /** Inline collection config owned by this store (mutually exclusive with `configPath`) */
   config?: CollectionConfig;
+  /** Model runtime settings for this store: model operations while CI is set */
+  llm?: StoreLlmOptions;
+  /**
+   * SQLite busy timeout in milliseconds: how long a statement waits for a lock
+   * that another connection holds. Takes precedence over QMD_SQLITE_BUSY_TIMEOUT.
+   * Defaults to 120000. Zero fails at once.
+   */
+  busyTimeoutMs?: number;
 }
 
 /**
@@ -695,6 +710,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   // Create a per-store LlamaCpp instance — lazy-loads models on first use,
   // auto-unloads after 5 min inactivity to free VRAM.
   const llm = new LlamaCpp({
+    ...options.llm,
     embedModel: configuredConfig?.models?.embed,
     embedOptions: configuredConfig?.models?.embedOptions,
     generateModel: configuredConfig?.models?.generate,
@@ -703,7 +719,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     inactivityTimeoutMs: 5 * 60 * 1000,
     disposeModelsOnInactivity: true,
   });
-  const internal = createStoreInternal(options.dbPath);
+  const internal = createStoreInternal(options.dbPath, { busyTimeoutMs: options.busyTimeoutMs });
   const db = internal.db;
 
   // Seed SQLite from the configuration that is authoritative now, read under
