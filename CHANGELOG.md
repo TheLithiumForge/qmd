@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `searchLex(query, { anyTerm: true })` matches documents with any term of the
+  query instead of all of them, and BM25 adds up the terms each document
+  matches. A natural-language question then finds documents that share some
+  of its words. The default still needs every term.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
