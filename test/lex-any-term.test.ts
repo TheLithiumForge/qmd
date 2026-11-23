@@ -15,6 +15,7 @@ test("anyTerm joins the terms with OR and ranks by the summed score", async () =
     add("d.md", "Retries are bounded, but this path is deprecated.");
     add("e.md", "Coordinate the multi-agent run.");
     add("f.md", "Nothing related lives here.");
+    add("g.md", "A limit on the backoff.");
     const paths = async (query: string, anyTerm?: boolean) =>
       (await store.searchLex(query, { anyTerm })).map(hit => hit.displayPath).sort();
     // A mapped score s is |bm25| / (1 + |bm25|), so |bm25| is s / (1 - s).
@@ -39,9 +40,13 @@ test("anyTerm joins the terms with OR and ranks by the summed score", async () =
     // A negated term excludes its documents from every term, not only from the last one.
     expect(await paths("retries bounded -deprecated", true)).toEqual(["docs/a.md", "docs/b.md", "docs/c.md"]);
 
-    // Terms keep their escaping and prefix match: multi-agent is the phrase "multi agent", noth matches nothing.
+    // Terms keep their escaping and prefix match: multi-agent is the phrase "multi agent",
+    // and noth matches "Nothing" as a prefix. No document holds both, so only anyTerm finds them.
     expect(await paths("noth multi-agent")).toEqual([]);
     expect(await paths("noth multi-agent", true)).toEqual(["docs/e.md", "docs/f.md"]);
+
+    // A quoted phrase stays a phrase: g.md holds both words, but not as the phrase.
+    expect(await paths('"backoff limit" queue', true)).toEqual(["docs/a.md", "docs/c.md"]);
   } finally {
     await store.close();
   }
