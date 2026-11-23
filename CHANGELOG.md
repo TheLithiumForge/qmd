@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- `createStore({ modelIdleTimeoutMs })` sets how long a store keeps its local
+  models loaded after the last call. It defaults to five minutes, as before.
+  Zero keeps them loaded until `close()`.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
