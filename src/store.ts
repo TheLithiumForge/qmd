@@ -3677,6 +3677,17 @@ export function countOrphanedVectors(db: Database): number {
 }
 
 /**
+ * True for a vector row `vr` of collection `ci` that no active document of
+ * that collection references. Without table statistics, SQLite looks
+ * `documents` up by its (collection, active) index, which reads the whole
+ * collection for every vector row. The unary + leaves that term out of index
+ * selection, so the lookup goes by hash and reads only that hash's documents.
+ */
+const ORPHANED_VECTOR_ROW_SQL = `NOT EXISTS (
+  SELECT 1 FROM documents d WHERE d.hash = vr.hash AND +d.collection = ci.name AND d.active = 1
+)`;
+
+/**
  * Remove vector rows whose (hash, collection) no active document references,
  * and the content_vectors rows of hashes no active document references at
  * all. Returns the number of orphaned chunks deleted.
@@ -3705,9 +3716,7 @@ export function cleanupOrphanedVectors(db: Database): number {
       const orphanRows = db.prepare(`
         SELECT vr.id FROM ${VEC_ROWS_TABLE} vr
         JOIN ${VEC_COLLECTION_IDS_TABLE} ci ON ci.id = vr.collection_id
-        WHERE NOT EXISTS (
-          SELECT 1 FROM documents d WHERE d.hash = vr.hash AND d.collection = ci.name AND d.active = 1
-        )
+        WHERE ${ORPHANED_VECTOR_ROW_SQL}
       `).all() as { id: number }[];
       const orphanedChunks = (db.prepare(ORPHANED_VECTOR_COUNT_SQL).get() as { c: number }).c;
       if (orphanRows.length === 0 && orphanedChunks === 0) {
@@ -3786,7 +3795,7 @@ function vectorRepackPlan(db: Database, dropOrphans: boolean = false): VecRepack
       FROM ${VEC_ROWS_TABLE} vr
       JOIN ${VEC_COLLECTION_IDS_TABLE} ci ON ci.id = vr.collection_id
       JOIN ${layout.shadow.rowids} r ON r.rowid = vr.id
-      WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.hash = vr.hash AND d.collection = ci.name AND d.active = 1)
+      WHERE ${ORPHANED_VECTOR_ROW_SQL}
       GROUP BY r.chunk_id
     `).all() as { chunkId: number; n: number }[];
     for (const row of rows) orphansByChunk.set(row.chunkId, row.n);

@@ -5,6 +5,10 @@
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
+- Look documents up by hash when `update()` and cleanup remove orphaned vector
+  rows. SQLite picked the `(collection, active)` index instead and read a whole
+  collection for every vector row, so one `update()` of a 15,338-document index
+  spent about 23 s in the cleanup.
 
 ## [2.9.0] - 2026-11-17
 
