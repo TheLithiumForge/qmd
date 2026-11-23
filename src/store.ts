@@ -5431,7 +5431,7 @@ export function searchFTS(db: Database, query: string, limit: number = 20, colle
       dm.metadata_json
     FROM fts_matches fm
     JOIN documents d ON d.id = fm.rowid
-    ${includeBody ? "JOIN content ON content.hash = d.hash" : ""}
+    JOIN content ON content.hash = d.hash
     LEFT JOIN document_metadata dm ON dm.document_id = d.id
     WHERE d.active = 1
   `;
@@ -5733,8 +5733,9 @@ function searchVecSnapshot(db: Database, embedding: number[], limit: number, col
   const resolve = vecDocumentResolver(db, filter);
   const queryVec = new Float32Array(embedding);
   // Bodies are capped at BODY_CAP_CHARS, as in searchFTS, so a large document cannot
-  // put its whole text on the heap for each result.
-  const bodyOf = db.prepare(`SELECT ${cappedBodySql("doc")} AS doc FROM content WHERE hash = ?`);
+  // put its whole text on the heap for each result. Without the body, the lookup
+  // still drops a hit whose content row is missing, as the join in searchFTS does.
+  const bodyOf = db.prepare(`SELECT ${includeBody ? cappedBodySql("doc") : "NULL"} AS doc FROM content WHERE hash = ?`);
 
   // Each target yields its own nearest `limit` documents (or all it holds), so
   // merging them by distance gives the scope's exact nearest `limit`. Ties go
@@ -5745,12 +5746,9 @@ function searchVecSnapshot(db: Database, embedding: number[], limit: number, col
     .slice(0, limit)
     .flatMap((row): SearchResult[] => {
       // Body, vector, metadata and context reads share the search snapshot.
-      let body: string | undefined;
-      if (includeBody) {
-        const content = bodyOf.get(row.hash) as { doc: string } | null | undefined;
-        if (content == null) return [];
-        body = content.doc;
-      }
+      const content = bodyOf.get(row.hash) as { doc: string | null } | null | undefined;
+      if (content == null) return [];
+      const body = content.doc ?? undefined;
       const collectionName = row.filepath.split('//')[1]?.split('/')[0] || "";
       return [{
         filepath: row.filepath,

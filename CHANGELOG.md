@@ -6,7 +6,8 @@
 
 - `searchLex()` and `searchVector()` take `includeBody` and `includeContext`.
   Set either to `false` to skip loading bodies or path contexts when a caller
-  needs only paths and scores. Both default to `true`.
+  needs only paths and scores. Both default to `true`, and the hits are the
+  same with either setting.
 
 - `embedQuery()` embeds a query once with the model's query instruction, and
   `searchVector()` takes the result as `embedding`. A caller that searches
@@ -14,7 +15,8 @@
 
 - `createStore({ modelIdleTimeoutMs })` sets how long a store keeps its local
   models loaded after the last call. It defaults to five minutes, as before.
-  Zero keeps them loaded until `close()`.
+  Zero keeps them loaded until `close()`, and `createStore()` rejects a value
+  that isn't a non-negative integer.
 
 - `update({ changed, removed })` reads and deactivates only the named files,
   without scanning any collection folder. A watcher or editor that knows which
@@ -48,11 +50,10 @@
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
-
 - Look documents up by hash when `update()` and cleanup remove orphaned vector
   rows. SQLite picked the `(collection, active)` index instead and read a whole
   collection for every vector row, so one `update()` of a 15,338-document index
-  spent about 24 s in the cleanup.
+  spent about 23 s in the cleanup.
 
 ## [2.9.0] - 2026-11-17
 

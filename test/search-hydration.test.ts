@@ -37,3 +37,34 @@ test("search hydration switches keep paths and scores across collections", async
     await store.close();
   }
 });
+
+test("both searches drop a hit whose content row is missing, with or without the body", async () => {
+  const store = await createStore({ dbPath: ":memory:", config: { collections: {
+    docs: { path: "/docs", pattern: "**/*.md" },
+  } } });
+  const now = new Date().toISOString();
+  try {
+    store.internal.ensureVecTable(3);
+    for (const name of ["kept", "lost"]) {
+      store.internal.insertContent(name, `# Authentication\nAuthentication in ${name}`, now);
+      store.internal.insertDocument("docs", `${name}.md`, "Authentication", name, now, now);
+      store.internal.insertEmbedding(name, 0, 0, new Float32Array([1, 0, 0]), "test", now);
+    }
+    // With foreign keys on, deleting content cascades to the document. Turn them
+    // off so the document, its FTS row and its vector stay, and only the content
+    // lookup can drop the hit.
+    const db = store.internal.db;
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.prepare(`DELETE FROM content WHERE hash = ?`).run("lost");
+    db.exec("PRAGMA foreign_keys = ON");
+    vi.spyOn(store.internal.llm!, "embed").mockResolvedValue({ embedding: [1, 0, 0], model: "test" });
+    for (const search of [store.searchLex, store.searchVector]) {
+      for (const includeBody of [true, false]) {
+        const hits = await search("authentication", { collection: "docs", includeBody });
+        expect(hits.map(hit => hit.filepath)).toEqual(["qmd://docs/kept.md"]);
+      }
+    }
+  } finally {
+    await store.close();
+  }
+});

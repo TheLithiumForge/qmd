@@ -30,3 +30,57 @@ test("one formatted query embedding can be reused across collections and refills
     await store.close();
   }
 });
+
+test("close() waits for a running embedQuery() before it releases the models", async () => {
+  const store = await createStore({ dbPath: ":memory:" });
+  const llm = store.internal.llm!;
+  const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+  const { promise: entered, resolve: signalEntered } = Promise.withResolvers<void>();
+  vi.spyOn(llm, "embed").mockImplementation(async () => {
+    signalEntered();
+    await gate;
+    return { embedding: [1, 0, 0], model: "test" };
+  });
+  const dispose = vi.spyOn(llm, "dispose");
+  try {
+    const embedding = store.embedQuery("query");
+    await entered;
+    const closing = store.close();
+    const early = await Promise.race([closing.then(() => "closed"), new Promise(resolve => setTimeout(resolve, 50, "pending"))]);
+    expect(early).toBe("pending");
+    expect(dispose).not.toHaveBeenCalled();
+    openGate();
+    expect(await embedding).toEqual([1, 0, 0]);
+    await closing;
+    expect(dispose).toHaveBeenCalledTimes(1);
+  } finally {
+    openGate();
+    await store.close();
+  }
+});
+
+test("an abort signal stops embedQuery() before and during the model call", async () => {
+  const store = await createStore({ dbPath: ":memory:" });
+  const { promise: entered, resolve: signalEntered } = Promise.withResolvers<void>();
+  const embed = vi.spyOn(store.internal.llm!, "embed").mockImplementation((_text, options) => {
+    signalEntered();
+    return new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true });
+    });
+  });
+  try {
+    // A signal that is already aborted fails the call without a model call.
+    await expect(store.embedQuery("query", { signal: AbortSignal.abort() })).rejects.toThrow();
+    expect(embed).not.toHaveBeenCalled();
+
+    // A signal aborted during the call reaches the model call and fails it.
+    const controller = new AbortController();
+    const embedding = store.embedQuery("query", { signal: controller.signal });
+    await entered;
+    controller.abort(new Error("caller gave up"));
+    await expect(embedding).rejects.toThrow("caller gave up");
+    expect(embed).toHaveBeenCalledTimes(1);
+  } finally {
+    await store.close();
+  }
+});
