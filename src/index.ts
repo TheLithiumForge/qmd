@@ -325,9 +325,10 @@ export interface StoreOptions {
   /** Inline collection config owned by this store (mutually exclusive with `configPath`) */
   config?: CollectionConfig;
   /**
-   * Receives each warning this store would print, with a stable code, and
-   * the console gets nothing. It runs synchronously where the warning comes
-   * up. Without it, warnings print as before.
+   * Receives the warnings this store would print, each with a stable code,
+   * instead of printing them. node-llama-cpp's own console messages still
+   * print. It runs synchronously where the warning comes up. Without it,
+   * warnings print as before.
    */
   onWarning?: (warning: StoreWarning) => void;
 }

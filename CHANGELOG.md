@@ -5,9 +5,10 @@
 ### Added
 
 - `createStore({ onWarning })` hands the store's warnings to a callback, each
-  with a stable `code` and its `message`, and the console gets nothing. That
-  includes the lines llama.cpp logs through node-llama-cpp. Without it,
-  warnings print as before.
+  with a stable `code` and its `message`, instead of printing them. That
+  includes llama.cpp's errors, through node-llama-cpp's `logger` option.
+  node-llama-cpp's own console messages, such as a failed binary load or
+  build, still print. Without `onWarning`, warnings print as before.
 
 ### Fixed
 

@@ -700,9 +700,9 @@ function printQmdWarning(message: string): void {
 }
 
 /**
- * The `logger` option of node-llama-cpp's getLlama() for a warning handler:
- * llama.cpp's warnings, errors and fatal messages reach the handler as
- * LLAMA_CPP_LOG, and nothing prints. Lower levels are dropped. Without a
+ * The `logger` option of node-llama-cpp's getLlama() for a warning handler.
+ * getLlama() runs with logLevel "error", so llama.cpp's errors and fatal
+ * messages reach the handler as LLAMA_CPP_LOG instead of printing. Without a
  * handler there is no logger, so node-llama-cpp prints as before.
  */
 function llamaCppLoggerFor(onWarning?: StoreWarningHandler): ((level: string, message: string) => void) | undefined {
