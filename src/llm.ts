@@ -699,6 +699,21 @@ function printQmdWarning(message: string): void {
   process.stderr.write(`QMD Warning: ${message}\n`);
 }
 
+/**
+ * The `logger` option of node-llama-cpp's getLlama() for a warning handler:
+ * llama.cpp's warnings, errors and fatal messages reach the handler as
+ * LLAMA_CPP_LOG, and nothing prints. Lower levels are dropped. Without a
+ * handler there is no logger, so node-llama-cpp prints as before.
+ */
+function llamaCppLoggerFor(onWarning?: StoreWarningHandler): ((level: string, message: string) => void) | undefined {
+  if (!onWarning) return undefined;
+  return (level, message) => {
+    if (level === "warn" || level === "error" || level === "fatal") {
+      onWarning({ code: "LLAMA_CPP_LOG", message: message.trimEnd() });
+    }
+  };
+}
+
 export function resolveParallelismOverride(
   envValue = process.env.QMD_EMBED_PARALLELISM,
   onWarning?: StoreWarningHandler,
@@ -1370,6 +1385,7 @@ export class LlamaCpp implements LLM {
       const canBuild = allowBuild && canWriteLlamaDir();
 
       const { getLlama, getLlamaGpuTypes, LlamaLogLevel } = await loadNodeLlamaCpp();
+      const logger = llamaCppLoggerFor(this.onWarning);
       const loadLlama = async (gpu: LlamaGpuMode, sourceBuildAllowed = canBuild, buildOverride?: "auto" | "never") =>
         await withNativeStdoutRedirectedToStderr(() => getLlama({
           // Prefer packaged prebuilt bindings before compiling llama.cpp locally.
@@ -1379,6 +1395,8 @@ export class LlamaCpp implements LLM {
           // diagnostic/probe paths that must not compile llama.cpp.
           build: buildOverride ?? (sourceBuildAllowed ? "auto" : "never"),
           logLevel: LlamaLogLevel.error,
+          // Without a handler, node-llama-cpp keeps its console logger.
+          ...(logger ? { logger } : {}),
           gpu,
           progressLogs: false,
           skipDownload: !sourceBuildAllowed,
