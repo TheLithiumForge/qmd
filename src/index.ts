@@ -78,6 +78,8 @@ import {
   LlamaCpp,
   withLLMSessionForLlm,
 } from "./llm.js";
+import type { StoreWarning } from "./warnings.js";
+export type { StoreWarning, StoreWarningCode } from "./warnings.js";
 export { RemoteEmbedder } from "./remote-embed.js";
 export type { RemoteEmbedOptions } from "./remote-embed.js";
 export { JevReranker } from "./jev.js";
@@ -322,6 +324,12 @@ export interface StoreOptions {
   configPath?: string;
   /** Inline collection config owned by this store (mutually exclusive with `configPath`) */
   config?: CollectionConfig;
+  /**
+   * Receives each warning this store would print, with a stable code, and
+   * the console gets nothing. It runs synchronously where the warning comes
+   * up. Without it, warnings print as before.
+   */
+  onWarning?: (warning: StoreWarning) => void;
 }
 
 /**
@@ -677,6 +685,9 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   if (options.configPath && options.config) {
     throw new Error("Provide either configPath or config, not both");
   }
+  if (options.onWarning !== undefined && typeof options.onWarning !== "function") {
+    throw new TypeError("onWarning must be a function");
+  }
 
   // Each store owns its own configuration scope. A YAML or inline source is
   // bound to this store for its lifetime, so another store created in the same
@@ -702,8 +713,9 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     rerankOptions: configuredConfig?.models?.rerankOptions,
     inactivityTimeoutMs: 5 * 60 * 1000,
     disposeModelsOnInactivity: true,
+    onWarning: options.onWarning,
   });
-  const internal = createStoreInternal(options.dbPath);
+  const internal = createStoreInternal(options.dbPath, { onWarning: options.onWarning });
   const db = internal.db;
 
   // Seed SQLite from the configuration that is authoritative now, read under

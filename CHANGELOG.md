@@ -2,8 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- `createStore({ onWarning })` hands the store's warnings to a callback, each
+  with a stable `code` and its `message`, and the console gets nothing.
+  Without it, warnings print as before.
+
 ### Fixed
 
+- `embed()` stopped through the caller's own `signal` no longer warns
+  "Session expired", since the caller chose to stop.
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
 
 ## [2.9.0] - 2026-11-17
