@@ -80,6 +80,7 @@ import { accessSync, constants, existsSync, mkdirSync, statSync, unlinkSync, rea
 import { createRequire } from "node:module";
 import { RemoteEmbedder, isRemoteEmbedModel, type RemoteEmbedOptions } from "./remote-embed.js";
 import { JevReranker, isJevModel, type JevRerankOptions } from "./jev.js";
+import { reportWarning, type StoreWarningHandler } from "./warnings.js";
 
 // =============================================================================
 // Embedding Formatting Functions
@@ -672,6 +673,8 @@ export type LlamaCppConfig = {
    * memory reclaim.
    */
   disposeModelsOnInactivity?: boolean;
+  /** Receives this instance's warnings instead of stderr. */
+  onWarning?: StoreWarningHandler;
 };
 
 /**
@@ -688,15 +691,42 @@ type ParallelismOptions = {
   platform?: NodeJS.Platform;
   computed: number;
   envValue?: string;
+  onWarning?: StoreWarningHandler;
 };
 
-export function resolveParallelismOverride(envValue = process.env.QMD_EMBED_PARALLELISM): number | undefined {
+/** How a model warning prints without a handler. */
+function printQmdWarning(message: string): void {
+  process.stderr.write(`QMD Warning: ${message}\n`);
+}
+
+/**
+ * The `logger` option of node-llama-cpp's getLlama() for a warning handler.
+ * getLlama() runs with logLevel "error", so llama.cpp's errors and fatal
+ * messages reach the handler as LLAMA_CPP_LOG instead of printing. Without a
+ * handler there is no logger, so node-llama-cpp prints as before.
+ */
+function llamaCppLoggerFor(onWarning?: StoreWarningHandler): ((level: string, message: string) => void) | undefined {
+  if (!onWarning) return undefined;
+  return (level, message) => {
+    if (level === "warn" || level === "error" || level === "fatal") {
+      onWarning({ code: "LLAMA_CPP_LOG", message: message.trimEnd() });
+    }
+  };
+}
+
+export function resolveParallelismOverride(
+  envValue = process.env.QMD_EMBED_PARALLELISM,
+  onWarning?: StoreWarningHandler,
+): number | undefined {
   const normalized = envValue?.trim() ?? "";
   if (!normalized) return undefined;
 
   const parsed = Number(normalized);
   if (!Number.isInteger(parsed) || parsed < 1) {
-    process.stderr.write(`QMD Warning: invalid QMD_EMBED_PARALLELISM="${envValue}", using automatic parallelism.\n`);
+    reportWarning(onWarning, {
+      code: "INVALID_ENV_VALUE",
+      message: `invalid QMD_EMBED_PARALLELISM="${envValue}", using automatic parallelism.`,
+    }, printQmdWarning);
     return undefined;
   }
 
@@ -704,7 +734,7 @@ export function resolveParallelismOverride(envValue = process.env.QMD_EMBED_PARA
 }
 
 export function resolveSafeParallelism(options: ParallelismOptions): number {
-  const override = resolveParallelismOverride(options.envValue);
+  const override = resolveParallelismOverride(options.envValue, options.onWarning);
   if (override !== undefined) return override;
 
   // node-llama-cpp/llama.cpp CUDA on Windows is unstable with multiple
@@ -775,7 +805,8 @@ export function estimateEmbedContextMB(options: {
 
 export function resolveLlamaGpuMode(
   envValue = process.env.QMD_LLAMA_GPU,
-  forceCpuValue = process.env.QMD_FORCE_CPU
+  forceCpuValue = process.env.QMD_FORCE_CPU,
+  onWarning?: StoreWarningHandler,
 ): LlamaGpuMode {
   const forceCpu = forceCpuValue?.trim().toLowerCase() ?? "";
   if (forceCpu && !["false", "off", "none", "disable", "disabled", "0"].includes(forceCpu)) {
@@ -787,7 +818,10 @@ export function resolveLlamaGpuMode(
   if (["false", "off", "none", "disable", "disabled", "0"].includes(normalized)) return false;
   if (normalized === "metal" || normalized === "vulkan" || normalized === "cuda") return normalized;
 
-  process.stderr.write(`QMD Warning: invalid QMD_LLAMA_GPU="${envValue}", using auto GPU selection.\n`);
+  reportWarning(onWarning, {
+    code: "INVALID_ENV_VALUE",
+    message: `invalid QMD_LLAMA_GPU="${envValue}", using auto GPU selection.`,
+  }, printQmdWarning);
   return "auto";
 }
 
@@ -804,7 +838,12 @@ async function disposeSequenceThenContext(
   await context.dispose();
 }
 
-async function disposeWithTimeout(resourceName: string, dispose: () => Promise<void>, timeoutMs = 1000): Promise<void> {
+async function disposeWithTimeout(
+  resourceName: string,
+  dispose: () => Promise<void>,
+  onWarning?: StoreWarningHandler,
+  timeoutMs = 1000,
+): Promise<void> {
   const timeoutPromise = new Promise<"timeout">((resolve) => {
     setTimeout(() => resolve("timeout"), timeoutMs).unref();
   });
@@ -812,16 +851,21 @@ async function disposeWithTimeout(resourceName: string, dispose: () => Promise<v
   try {
     const result = await Promise.race([dispose(), timeoutPromise]);
     if (result === "timeout") {
-      process.stderr.write(`QMD Warning: timed out disposing ${resourceName}; continuing shutdown.\n`);
+      reportWarning(onWarning, {
+        code: "DISPOSE_FAILED",
+        message: `timed out disposing ${resourceName}; continuing shutdown.`,
+      }, printQmdWarning);
     }
   } catch (error) {
-    process.stderr.write(
-      `QMD Warning: failed to dispose ${resourceName} (${error instanceof Error ? error.message : String(error)}); continuing shutdown.\n`
-    );
+    reportWarning(onWarning, {
+      code: "DISPOSE_FAILED",
+      message: `failed to dispose ${resourceName} (${error instanceof Error ? error.message : String(error)}); continuing shutdown.`,
+      cause: error,
+    }, printQmdWarning);
   }
 }
 
-function resolveExpandContextSize(configValue?: number): number {
+function resolveExpandContextSize(configValue?: number, onWarning?: StoreWarningHandler): number {
   if (configValue !== undefined) {
     if (!Number.isInteger(configValue) || configValue <= 0) {
       throw new Error(`Invalid expandContextSize: ${configValue}. Must be a positive integer.`);
@@ -834,9 +878,10 @@ function resolveExpandContextSize(configValue?: number): number {
 
   const parsed = Number.parseInt(envValue, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    process.stderr.write(
-      `QMD Warning: invalid QMD_EXPAND_CONTEXT_SIZE="${envValue}", using default ${DEFAULT_EXPAND_CONTEXT_SIZE}.\n`
-    );
+    reportWarning(onWarning, {
+      code: "INVALID_ENV_VALUE",
+      message: `invalid QMD_EXPAND_CONTEXT_SIZE="${envValue}", using default ${DEFAULT_EXPAND_CONTEXT_SIZE}.`,
+    }, printQmdWarning);
     return DEFAULT_EXPAND_CONTEXT_SIZE;
   }
   return parsed;
@@ -846,8 +891,8 @@ const failedGpuInitModes = new Set<LlamaGpuMode>();
 let noGpuAccelerationWarningShown = false;
 let cpuForcedPrebuiltFallbackWarningShown = false;
 
-function isCpuModeRequested(): boolean {
-  return resolveLlamaGpuMode() === false;
+function isCpuModeRequested(onWarning?: StoreWarningHandler): boolean {
+  return resolveLlamaGpuMode(undefined, undefined, onWarning) === false;
 }
 
 // =============================================================================
@@ -964,7 +1009,7 @@ class LlmResourceLifecycle {
    * Disposal is awaited to real completion (no timeout), so the gate can never
    * reopen while a disposed context is still being used by native code.
    */
-  beginUnload(dispose: () => Promise<void>): Promise<void> | null {
+  beginUnload(dispose: () => Promise<void>, onWarning?: StoreWarningHandler): Promise<void> | null {
     if (!this.canUnload) return null;
 
     this._state = "unloading";
@@ -974,7 +1019,11 @@ class LlmResourceLifecycle {
       try {
         await dispose();
       } catch (error) {
-        console.error("Error unloading idle resources:", error);
+        reportWarning(onWarning, {
+          code: "IDLE_UNLOAD_FAILED",
+          message: `Error unloading idle resources: ${error instanceof Error ? error.message : String(error)}`,
+          cause: error,
+        }, () => console.error("Error unloading idle resources:", error));
       } finally {
         // A concurrent dispose() owns the terminal state; never reopen it.
         if (this._state === "unloading") this._state = "ready";
@@ -1082,6 +1131,7 @@ export class LlamaCpp implements LLM {
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   private inactivityTimeoutMs: number;
   private disposeModelsOnInactivity: boolean;
+  private readonly onWarning?: StoreWarningHandler;
 
   /**
    * Guards every resource borrow and disposal for this instance. Shared with
@@ -1114,8 +1164,9 @@ export class LlamaCpp implements LLM {
     } else if (config.rerankOptions !== undefined) {
       throw new Error("rerankOptions requires a typesafe: rerank model");
     }
+    this.onWarning = config.onWarning;
     this.modelCacheDir = config.modelCacheDir || MODEL_CACHE_DIR;
-    this.expandContextSize = resolveExpandContextSize(config.expandContextSize);
+    this.expandContextSize = resolveExpandContextSize(config.expandContextSize, this.onWarning);
     this.inactivityTimeoutMs = config.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
     this.disposeModelsOnInactivity = config.disposeModelsOnInactivity ?? false;
   }
@@ -1205,7 +1256,7 @@ export class LlamaCpp implements LLM {
       clearTimeout(this.inactivityTimer);
       this.inactivityTimer = null;
     }
-    return this.lifecycle.beginUnload(() => this.disposeIdleResources());
+    return this.lifecycle.beginUnload(() => this.disposeIdleResources(), this.onWarning);
   }
 
   /**
@@ -1329,11 +1380,12 @@ export class LlamaCpp implements LLM {
 
   private async loadLlamaRuntime(allowBuild = true): Promise<Llama> {
     if (!this.llama) {
-      const gpuMode = resolveLlamaGpuMode();
+      const gpuMode = resolveLlamaGpuMode(undefined, undefined, this.onWarning);
       // Skip source build when install dir is read-only (e.g. NixOS store).
       const canBuild = allowBuild && canWriteLlamaDir();
 
       const { getLlama, getLlamaGpuTypes, LlamaLogLevel } = await loadNodeLlamaCpp();
+      const logger = llamaCppLoggerFor(this.onWarning);
       const loadLlama = async (gpu: LlamaGpuMode, sourceBuildAllowed = canBuild, buildOverride?: "auto" | "never") =>
         await withNativeStdoutRedirectedToStderr(() => getLlama({
           // Prefer packaged prebuilt bindings before compiling llama.cpp locally.
@@ -1343,6 +1395,8 @@ export class LlamaCpp implements LLM {
           // diagnostic/probe paths that must not compile llama.cpp.
           build: buildOverride ?? (sourceBuildAllowed ? "auto" : "never"),
           logLevel: LlamaLogLevel.error,
+          // Without a handler, node-llama-cpp keeps its console logger.
+          ...(logger ? { logger } : {}),
           gpu,
           progressLogs: false,
           skipDownload: !sourceBuildAllowed,
@@ -1357,9 +1411,11 @@ export class LlamaCpp implements LLM {
           // binding and disable model offloading via gpuLayers: 0.
           if (!cpuForcedPrebuiltFallbackWarningShown) {
             cpuForcedPrebuiltFallbackWarningShown = true;
-            process.stderr.write(
-              `QMD Warning: CPU-only llama.cpp prebuilt not available (${err instanceof Error ? err.message : String(err)}); using packaged backend with GPU offloading disabled.\n`
-            );
+            reportWarning(this.onWarning, {
+              code: "GPU_FALLBACK",
+              message: `CPU-only llama.cpp prebuilt not available (${err instanceof Error ? err.message : String(err)}); using packaged backend with GPU offloading disabled.`,
+              cause: err,
+            }, printQmdWarning);
           }
           return await loadLlama("auto", false);
         }
@@ -1369,9 +1425,10 @@ export class LlamaCpp implements LLM {
       if (gpuMode === false) {
         llama = await loadCpuCompatibleLlama();
       } else if (failedGpuInitModes.has(gpuMode)) {
-        process.stderr.write(
-          `QMD Warning: skipping previously failed GPU init${gpuMode === "auto" ? "" : ` for QMD_LLAMA_GPU=${gpuMode}`}, using CPU.\n`
-        );
+        reportWarning(this.onWarning, {
+          code: "GPU_FALLBACK",
+          message: `skipping previously failed GPU init${gpuMode === "auto" ? "" : ` for QMD_LLAMA_GPU=${gpuMode}`}, using CPU.`,
+        }, printQmdWarning);
         llama = await loadCpuCompatibleLlama();
       } else {
         try {
@@ -1390,11 +1447,11 @@ export class LlamaCpp implements LLM {
               try {
                 const gpuLlama = await loadLlama(candidate, false, "never");
                 if (gpuLlama.gpu !== false) {
-                  await disposeWithTimeout("CPU llama runtime", () => llama.dispose());
+                  await disposeWithTimeout("CPU llama runtime", () => llama.dispose(), this.onWarning);
                   llama = gpuLlama;
                   break;
                 }
-                await disposeWithTimeout(`${candidate} probe runtime`, () => gpuLlama.dispose());
+                await disposeWithTimeout(`${candidate} probe runtime`, () => gpuLlama.dispose(), this.onWarning);
               } catch {
                 failedGpuInitModes.add(candidate);
               }
@@ -1405,18 +1462,21 @@ export class LlamaCpp implements LLM {
           // Fall back to CPU so qmd still works, and cache the failure to avoid repeated
           // expensive native build/probe attempts in this process.
           failedGpuInitModes.add(gpuMode);
-          process.stderr.write(
-            `QMD Warning: GPU init failed${gpuMode === "auto" ? "" : ` for QMD_LLAMA_GPU=${gpuMode}`} (${err instanceof Error ? err.message : String(err)}), falling back to CPU.\n`
-          );
+          reportWarning(this.onWarning, {
+            code: "GPU_FALLBACK",
+            message: `GPU init failed${gpuMode === "auto" ? "" : ` for QMD_LLAMA_GPU=${gpuMode}`} (${err instanceof Error ? err.message : String(err)}), falling back to CPU.`,
+            cause: err,
+          }, printQmdWarning);
           llama = await loadCpuCompatibleLlama();
         }
       }
 
       if (llama.gpu === false && !noGpuAccelerationWarningShown) {
         noGpuAccelerationWarningShown = true;
-        process.stderr.write(
-          "QMD Warning: no GPU acceleration, running on CPU (slow). Run 'qmd doctor' for device diagnostics.\n"
-        );
+        reportWarning(this.onWarning, {
+          code: "NO_GPU",
+          message: "no GPU acceleration, running on CPU (slow). Run 'qmd doctor' for device diagnostics.",
+        }, printQmdWarning);
       }
       this.llama = llama;
     }
@@ -1424,7 +1484,7 @@ export class LlamaCpp implements LLM {
   }
 
   private isCpuOffloadForced(): boolean {
-    return isCpuModeRequested();
+    return isCpuModeRequested(this.onWarning);
   }
 
   private modelLoadOptions(modelPath: string): { modelPath: string; gpuLayers?: number } {
@@ -1494,9 +1554,9 @@ export class LlamaCpp implements LLM {
         const vram = await llama.getVramState();
         const freeMB = vram.free / (1024 * 1024);
         const computed = computeGpuContextPoolSize({ freeMB, perContextMB, reserveMB });
-        return resolveSafeParallelism({ gpu: llama.gpu, computed });
+        return resolveSafeParallelism({ gpu: llama.gpu, computed, onWarning: this.onWarning });
       } catch {
-        return resolveSafeParallelism({ gpu: llama.gpu, computed: 2 });
+        return resolveSafeParallelism({ gpu: llama.gpu, computed: 2, onWarning: this.onWarning });
       }
     }
 
@@ -1504,7 +1564,7 @@ export class LlamaCpp implements LLM {
     const cores = llama.cpuMathCores || 4;
     const maxContexts = Math.floor(cores / 4);
     const computed = Math.max(1, Math.min(4, maxContexts));
-    return resolveSafeParallelism({ gpu: false, computed });
+    return resolveSafeParallelism({ gpu: false, computed, onWarning: this.onWarning });
   }
 
   /**
@@ -1696,10 +1756,12 @@ export class LlamaCpp implements LLM {
             // never accepted that option, so the retry repeated identical
             // arguments and the real error was discarded.
             const detail = error instanceof Error ? error.message : String(error);
-            console.warn(
-              `Reranker unavailable — skipping reranking (${detail}). ` +
-              "Use --no-rerank to silence this warning.",
-            );
+            reportWarning(this.onWarning, {
+              code: "RERANK_UNAVAILABLE",
+              message: `Reranker unavailable — skipping reranking (${detail}). ` +
+                "Use --no-rerank to silence this warning.",
+              cause: error,
+            }, (message) => console.warn(message));
             return [];
           }
           // At least one context exists — continue with reduced parallelism.
@@ -1808,9 +1870,7 @@ export class LlamaCpp implements LLM {
 
         // Guard: truncate text that exceeds model context window to prevent GGML crash
         const { text: safeText, truncated, limit } = await this.truncateToContextSize(text);
-        if (truncated) {
-          console.warn(`⚠ Text truncated to fit embedding context (${limit} tokens)`);
-        }
+        if (truncated) this.warnTruncated(`Text truncated to fit embedding context (${limit} tokens)`);
 
         const embedding = await context.getEmbeddingFor(safeText);
 
@@ -1819,7 +1879,7 @@ export class LlamaCpp implements LLM {
           model: options.model ?? this.embedModelUri,
         };
       } catch (error) {
-        console.error("Embedding error:", error);
+        this.warnEmbedFailed("Embedding error:", error);
         return null;
       }
     });
@@ -1859,14 +1919,12 @@ export class LlamaCpp implements LLM {
         for (const text of texts) {
           try {
             const { text: safeText, truncated, limit } = await this.truncateToContextSize(text);
-            if (truncated) {
-              console.warn(`⚠ Batch text truncated to fit embedding context (${limit} tokens)`);
-            }
+            if (truncated) this.warnTruncated(`Batch text truncated to fit embedding context (${limit} tokens)`);
             const embedding = await context.getEmbeddingFor(safeText);
             this.touchActivity();
             embeddings.push({ embedding: Array.from(embedding.vector), model: options.model ?? this.embedModelUri });
           } catch (err) {
-            console.error("Embedding error for text:", err);
+            this.warnEmbedFailed("Embedding error for text:", err);
             embeddings.push(null);
           }
         }
@@ -1886,14 +1944,12 @@ export class LlamaCpp implements LLM {
           for (const text of chunk) {
             try {
               const { text: safeText, truncated, limit } = await this.truncateToContextSize(text);
-              if (truncated) {
-                console.warn(`⚠ Batch text truncated to fit embedding context (${limit} tokens)`);
-              }
+              if (truncated) this.warnTruncated(`Batch text truncated to fit embedding context (${limit} tokens)`);
               const embedding = await ctx.getEmbeddingFor(safeText);
               this.touchActivity();
               results.push({ embedding: Array.from(embedding.vector), model: options.model ?? this.embedModelUri });
             } catch (err) {
-              console.error("Embedding error for text:", err);
+              this.warnEmbedFailed("Embedding error for text:", err);
               results.push(null);
             }
           }
@@ -1903,9 +1959,22 @@ export class LlamaCpp implements LLM {
 
       return chunkResults.flat();
     } catch (error) {
-      console.error("Batch embedding error:", error);
+      this.warnEmbedFailed("Batch embedding error:", error);
       return texts.map(() => null);
     }
+  }
+
+  private warnTruncated(message: string): void {
+    reportWarning(this.onWarning, { code: "EMBED_TEXT_TRUNCATED", message }, (text) => console.warn(`⚠ ${text}`));
+  }
+
+  /** `label` is the prefix QMD prints before the error without a handler. */
+  private warnEmbedFailed(label: string, error: unknown): void {
+    reportWarning(this.onWarning, {
+      code: "EMBED_FAILED",
+      message: `${label} ${error instanceof Error ? error.message : String(error)}`,
+      cause: error,
+    }, () => console.error(label, error));
   }
 
   async generate(prompt: string, options: GenerateOptions = {}): Promise<GenerateResult | null> {
@@ -2072,7 +2141,11 @@ export class LlamaCpp implements LLM {
       ];
       return includeLexical ? fallback : fallback.filter(q => q.type !== 'lex');
     } catch (error) {
-      console.error("Structured query expansion failed:", error);
+      reportWarning(this.onWarning, {
+        code: "QUERY_EXPANSION_FAILED",
+        message: `Structured query expansion failed: ${error instanceof Error ? error.message : String(error)}`,
+        cause: error,
+      }, () => console.error("Structured query expansion failed:", error));
       // Fallback to original query
       const fallback: Queryable[] = [{ type: 'vec', text: query }];
       if (includeLexical) fallback.unshift({ type: 'lex', text: query });
@@ -2306,28 +2379,28 @@ export class LlamaCpp implements LLM {
     // otherwise-successful CLI output (#368).
     const { embed, rerank } = this.drainContextPools();
     for (const ctx of embed) {
-      await disposeWithTimeout("embedding context", () => ctx.dispose());
+      await disposeWithTimeout("embedding context", () => ctx.dispose(), this.onWarning);
     }
     for (const ctx of rerank) {
-      await disposeWithTimeout("rerank context", () => ctx.dispose());
+      await disposeWithTimeout("rerank context", () => ctx.dispose(), this.onWarning);
     }
 
     if (this.embedModel) {
-      await disposeWithTimeout("embedding model", () => this.embedModel!.dispose());
+      await disposeWithTimeout("embedding model", () => this.embedModel!.dispose(), this.onWarning);
       this.embedModel = null;
       this.embedModelPath = null;
     }
     if (this.generateModel) {
-      await disposeWithTimeout("generation model", () => this.generateModel!.dispose());
+      await disposeWithTimeout("generation model", () => this.generateModel!.dispose(), this.onWarning);
       this.generateModel = null;
     }
     if (this.rerankModel) {
-      await disposeWithTimeout("rerank model", () => this.rerankModel!.dispose());
+      await disposeWithTimeout("rerank model", () => this.rerankModel!.dispose(), this.onWarning);
       this.rerankModel = null;
     }
 
     if (this.llama) {
-      await disposeWithTimeout("llama runtime", () => this.llama!.dispose());
+      await disposeWithTimeout("llama runtime", () => this.llama!.dispose(), this.onWarning);
       this.llama = null;
     }
 

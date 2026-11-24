@@ -28,6 +28,7 @@ import {
   vecTableReadable,
   type ReadableVecLayout,
 } from "./vec-layout.js";
+import { reportWarning, type StoreWarningHandler } from "./warnings.js";
 
 export const FTS_SYNC_TRIGGERS_VERSION = 1;
 export const VECTOR_PARTITION_VERSION = 2;
@@ -74,6 +75,7 @@ export type VectorMigrationProgress = {
 export type VectorMigrationOptions = {
   sqliteVecAvailable: boolean;
   onProgress?: (progress: VectorMigrationProgress) => void;
+  onWarning?: StoreWarningHandler;
 };
 
 export type VectorMigrationResult = "applied" | "deferred";
@@ -258,7 +260,11 @@ export function migrateVectorLayout(db: Database, options: VectorMigrationOption
     try {
       db.exec(`VACUUM`);
     } catch (err) {
-      console.warn(`VACUUM after the vector migration did not run (${err instanceof Error ? err.message : String(err)}); run 'qmd cleanup' to reclaim the space.`);
+      reportWarning(options.onWarning, {
+        code: "VECTOR_VACUUM_FAILED",
+        message: `VACUUM after the vector migration did not run (${err instanceof Error ? err.message : String(err)}); run 'qmd cleanup' to reclaim the space.`,
+        cause: err,
+      }, (message) => console.warn(message));
     }
   }
   report("done", total);
@@ -288,7 +294,11 @@ export function runStoreMigrations(db: Database, deps: StoreMigrationDeps): void
     try {
       migrateVectorLayout(db, deps);
     } catch (err) {
-      console.warn(`Legacy vector table left in place: ${err instanceof Error ? err.message : String(err)}`);
+      reportWarning(deps.onWarning, {
+        code: "LEGACY_VECTOR_TABLE_KEPT",
+        message: `Legacy vector table left in place: ${err instanceof Error ? err.message : String(err)}`,
+        cause: err,
+      }, (message) => console.warn(message));
     }
   }
 }

@@ -21,6 +21,7 @@
 import { createRequire } from "node:module";
 import { extname } from "node:path";
 import type { BreakPoint } from "./store.js";
+import { reportWarning, type StoreWarningHandler } from "./warnings.js";
 
 // web-tree-sitter types — imported dynamically to avoid top-level WASM init
 type ParserType = import("web-tree-sitter").Parser;
@@ -222,7 +223,7 @@ function resolveGrammarPath(language: SupportedLanguage): string {
  * Load and cache a grammar for the given language.
  * Returns null on failure (logs once per language).
  */
-async function loadGrammar(language: SupportedLanguage): Promise<LanguageType | null> {
+async function loadGrammar(language: SupportedLanguage, onWarning?: StoreWarningHandler): Promise<LanguageType | null> {
   if (failedLanguages.has(language)) return null;
 
   const wasmKey = GRAMMAR_MAP[language].wasm;
@@ -240,7 +241,11 @@ async function loadGrammar(language: SupportedLanguage): Promise<LanguageType | 
     grammarCache.delete(wasmKey);
     const message = formatGrammarLoadError(language, err);
     grammarLoadErrors.set(language, message);
-    console.warn(`[qmd] AST grammar unavailable for ${language}: ${message}`);
+    reportWarning(onWarning, {
+      code: "AST_GRAMMAR_UNAVAILABLE",
+      message: `AST grammar unavailable for ${language}: ${message}`,
+      cause: err,
+    }, (text) => console.warn(`[qmd] ${text}`));
     return null;
   }
 }
@@ -269,11 +274,13 @@ function getQuery(language: SupportedLanguage, grammar: LanguageType): QueryType
  *
  * @param content - The file content to parse.
  * @param filepath - The file path (used for language detection).
+ * @param onWarning - Receives a grammar or parse failure instead of the console.
  * @returns Array of BreakPoint objects suitable for merging with regex break points.
  */
 export async function getASTBreakPoints(
   content: string,
   filepath: string,
+  onWarning?: StoreWarningHandler,
 ): Promise<BreakPoint[]> {
   const language = detectLanguage(filepath);
   if (!language) return [];
@@ -281,7 +288,7 @@ export async function getASTBreakPoints(
   try {
     await ensureInit();
 
-    const grammar = await loadGrammar(language);
+    const grammar = await loadGrammar(language, onWarning);
     if (!grammar) return [];
 
     const parser = new ParserClass!();
@@ -317,7 +324,11 @@ export async function getASTBreakPoints(
 
     return Array.from(seen.values()).sort((a, b) => a.pos - b.pos);
   } catch (err) {
-    console.warn(`[qmd] AST parse failed for ${filepath}, falling back to regex: ${err instanceof Error ? err.message : err}`);
+    reportWarning(onWarning, {
+      code: "AST_PARSE_FAILED",
+      message: `AST parse failed for ${filepath}, falling back to regex: ${err instanceof Error ? err.message : err}`,
+      cause: err,
+    }, (text) => console.warn(`[qmd] ${text}`));
     return [];
   }
 }
