@@ -47,6 +47,11 @@
   matches. A natural-language question then finds documents that share some
   of its words. The default still needs every term.
 
+- `createStore({ llm })` sets the query expansion and reranking context sizes
+  for one store. Each option wins over its environment variable, and
+  `QMD_RERANK_CONTEXT_SIZE` is now read when a store is created, not when
+  `llm.js` loads.
+
 ### Fixed
 
 - Keep local embedding inputs in a single evaluation batch so pooled embeddings cover the full input (#1121). Run `qmd embed --force` to refresh existing vectors.
