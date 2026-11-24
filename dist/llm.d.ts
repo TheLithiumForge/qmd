@@ -269,6 +269,8 @@ export type LlamaCppConfig = {
      * Default: 2048. Can also be set via QMD_EXPAND_CONTEXT_SIZE.
      */
     expandContextSize?: number;
+    /** Reranking context size in tokens (default: 4096). Takes precedence over QMD_RERANK_CONTEXT_SIZE. */
+    rerankContextSize?: number;
     /**
      * Inactivity timeout in ms before unloading contexts (default: 2 minutes, 0 to disable).
      *
@@ -371,6 +373,7 @@ export declare class LlamaCpp implements LLM {
     private embedParallelism;
     private embedContextSize;
     private expandContextSize;
+    private rerankContextSize;
     private embedModelLoadPromise;
     private generateModelLoadPromise;
     private rerankModelLoadPromise;
@@ -518,7 +521,6 @@ export declare class LlamaCpp implements LLM {
      * VRAM per context is governed by contextSize alone —
      * LlamaRankingContextOptions has no flashAttention option.
      */
-    private static readonly RERANK_CONTEXT_SIZE;
     private static readonly EMBED_CONTEXT_SIZE;
     private ensureRerankContexts;
     /**

@@ -328,7 +328,14 @@ export interface ExpandQueryOptions {
  */
 export type StoreLlmOptions = Pick<
   LlamaCppConfig,
-  "modelCacheDir" | "skipDownload" | "gpu" | "embedParallelism" | "embedContextSize" | "allowInCI"
+  | "modelCacheDir"
+  | "skipDownload"
+  | "gpu"
+  | "embedParallelism"
+  | "embedContextSize"
+  | "expandContextSize"
+  | "rerankContextSize"
+  | "allowInCI"
 >;
 
 /**
@@ -352,7 +359,11 @@ export interface StoreOptions {
   config?: CollectionConfig;
   /** Model idle timeout in milliseconds. Defaults to five minutes. Zero keeps models loaded until close(). */
   modelIdleTimeoutMs?: number;
-  /** Model runtime settings for this store: cache folder, downloads, device, embedding contexts and model operations while CI is set */
+  /**
+   * Model runtime settings for this store: cache folder, downloads, device,
+   * embedding contexts, query expansion and reranking context sizes, and model
+   * operations while CI is set
+   */
   llm?: StoreLlmOptions;
   /**
    * Open an existing index without write access. Nothing is created, migrated

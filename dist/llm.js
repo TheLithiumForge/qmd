@@ -379,6 +379,14 @@ export async function pullModels(models, options = {}) {
 // Default inactivity timeout: 5 minutes (keep models warm during typical search sessions)
 const DEFAULT_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_EXPAND_CONTEXT_SIZE = 2048;
+// Qwen3 reranker template adds ~200 tokens overhead (system prompt, tags, etc.)
+// Default 2048 was too small for longer documents (e.g. session transcripts,
+// CJK text, or large markdown files) — callers hit "input lengths exceed
+// context size" errors even after truncation because the overhead estimate
+// was insufficient.  4096 comfortably fits the largest real-world chunks
+// while staying well below the 40 960-token auto size.
+// Override with QMD_RERANK_CONTEXT_SIZE or rerankContextSize if you need more headroom.
+const DEFAULT_RERANK_CONTEXT_SIZE = 4096;
 export function resolveParallelismOverride(envValue = process.env.QMD_EMBED_PARALLELISM) {
     const normalized = envValue?.trim() ?? "";
     if (!normalized)
@@ -500,6 +508,16 @@ function resolveExpandContextSize(configValue) {
         return DEFAULT_EXPAND_CONTEXT_SIZE;
     }
     return parsed;
+}
+function resolveRerankContextSize(configValue) {
+    if (configValue !== undefined) {
+        if (!Number.isInteger(configValue) || configValue <= 0) {
+            throw new Error(`Invalid rerankContextSize: ${configValue}. Must be a positive integer.`);
+        }
+        return configValue;
+    }
+    const parsed = Number.parseInt(process.env.QMD_RERANK_CONTEXT_SIZE ?? "", 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RERANK_CONTEXT_SIZE;
 }
 function requirePositiveInteger(name, value) {
     if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
@@ -684,6 +702,7 @@ export class LlamaCpp {
     embedParallelism;
     embedContextSize;
     expandContextSize;
+    rerankContextSize;
     // Ensure we don't load the same model/context concurrently (which can allocate duplicate VRAM).
     embedModelLoadPromise = null;
     generateModelLoadPromise = null;
@@ -734,6 +753,7 @@ export class LlamaCpp {
         this.embedParallelism = requirePositiveInteger("embedParallelism", config.embedParallelism);
         this.embedContextSize = requirePositiveInteger("embedContextSize", config.embedContextSize) ?? LlamaCpp.EMBED_CONTEXT_SIZE;
         this.expandContextSize = resolveExpandContextSize(config.expandContextSize);
+        this.rerankContextSize = resolveRerankContextSize(config.rerankContextSize);
         this.inactivityTimeoutMs = config.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
         this.disposeModelsOnInactivity = config.disposeModelsOnInactivity ?? false;
         this._ciMode = !!process.env.CI && !config.allowInCI;
@@ -1237,17 +1257,6 @@ export class LlamaCpp {
      * VRAM per context is governed by contextSize alone —
      * LlamaRankingContextOptions has no flashAttention option.
      */
-    // Qwen3 reranker template adds ~200 tokens overhead (system prompt, tags, etc.)
-    // Default 2048 was too small for longer documents (e.g. session transcripts,
-    // CJK text, or large markdown files) — callers hit "input lengths exceed
-    // context size" errors even after truncation because the overhead estimate
-    // was insufficient.  4096 comfortably fits the largest real-world chunks
-    // while staying well below the 40 960-token auto size.
-    // Override with QMD_RERANK_CONTEXT_SIZE env var if you need more headroom.
-    static RERANK_CONTEXT_SIZE = (() => {
-        const v = parseInt(process.env.QMD_RERANK_CONTEXT_SIZE ?? "", 10);
-        return Number.isFinite(v) && v > 0 ? v : 4096;
-    })();
     static EMBED_CONTEXT_SIZE = (() => {
         const v = parseInt(process.env.QMD_EMBED_CONTEXT_SIZE ?? "", 10);
         return Number.isFinite(v) && v > 0 ? v : 2048;
@@ -1271,7 +1280,7 @@ export class LlamaCpp {
             for (let i = 0; i < n; i++) {
                 try {
                     this.rerankContexts.push(await model.createRankingContext({
-                        contextSize: LlamaCpp.RERANK_CONTEXT_SIZE,
+                        contextSize: this.rerankContextSize,
                         ...(threads > 0 ? { threads } : {}),
                     }));
                 }
@@ -1664,7 +1673,7 @@ export class LlamaCpp {
         // Truncate documents that would exceed the rerank context size.
         // Budget = contextSize - template overhead - query tokens
         const queryTokens = model.tokenize(query).length;
-        const maxDocTokens = LlamaCpp.RERANK_CONTEXT_SIZE - LlamaCpp.RERANK_TEMPLATE_OVERHEAD - queryTokens;
+        const maxDocTokens = this.rerankContextSize - LlamaCpp.RERANK_TEMPLATE_OVERHEAD - queryTokens;
         const truncationCache = new Map();
         const truncatedDocs = documents.map((doc) => {
             const cached = truncationCache.get(doc.text);

@@ -132,7 +132,7 @@ export interface ExpandQueryOptions {
  * Model runtime settings for one store. An option takes precedence over its
  * environment variable. An omitted option keeps the variable or the default.
  */
-export type StoreLlmOptions = Pick<LlamaCppConfig, "modelCacheDir" | "skipDownload" | "gpu" | "embedParallelism" | "embedContextSize" | "allowInCI">;
+export type StoreLlmOptions = Pick<LlamaCppConfig, "modelCacheDir" | "skipDownload" | "gpu" | "embedParallelism" | "embedContextSize" | "expandContextSize" | "rerankContextSize" | "allowInCI">;
 /**
  * Options for creating a QMD store.
  *
@@ -154,7 +154,11 @@ export interface StoreOptions {
     config?: CollectionConfig;
     /** Model idle timeout in milliseconds. Defaults to five minutes. Zero keeps models loaded until close(). */
     modelIdleTimeoutMs?: number;
-    /** Model runtime settings for this store: cache folder, downloads, device, embedding contexts and model operations while CI is set */
+    /**
+     * Model runtime settings for this store: cache folder, downloads, device,
+     * embedding contexts, query expansion and reranking context sizes, and model
+     * operations while CI is set
+     */
     llm?: StoreLlmOptions;
     /**
      * Open an existing index without write access. Nothing is created, migrated
