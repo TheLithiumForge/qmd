@@ -37,7 +37,7 @@ export type StoreWarningCode =
   | "GPU_FALLBACK"
   /** The llama.cpp runtime has no GPU acceleration. */
   | "NO_GPU"
-  /** A warning, error or fatal message that llama.cpp logged through node-llama-cpp. */
+  /** An error or fatal message that llama.cpp logged through node-llama-cpp. */
   | "LLAMA_CPP_LOG"
   /** Unloading idle models or contexts failed. */
   | "IDLE_UNLOAD_FAILED"
