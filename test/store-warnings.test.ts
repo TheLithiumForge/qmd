@@ -3,19 +3,21 @@
  * nothing. Without it, the same warnings print as before. An embed run that the
  * caller stops through its own signal reports nothing either way.
  *
- * A stand-in replaces the embedding model, so no model loads.
+ * Stand-ins replace the embedding model and node-llama-cpp, so no model loads.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStore, type StoreOptions, type StoreWarning } from "../src/index.js";
+import { setNodeLlamaCppModuleForTest } from "../src/llm.js";
 import { generateEmbeddings } from "../src/store.js";
 
 let testDir: string;
 let docsDir: string;
 let dbCount = 0;
-let savedExpandContextSize: string | undefined;
+const ENV = ["QMD_EXPAND_CONTEXT_SIZE", "QMD_LLAMA_GPU", "QMD_FORCE_CPU"] as const;
+const savedEnv = new Map<string, string | undefined>();
 
 beforeAll(async () => {
   testDir = await mkdtemp(join(tmpdir(), "qmd-store-warnings-"));
@@ -31,14 +33,19 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  savedExpandContextSize = process.env.QMD_EXPAND_CONTEXT_SIZE;
-  delete process.env.QMD_EXPAND_CONTEXT_SIZE;
+  for (const name of ENV) {
+    savedEnv.set(name, process.env[name]);
+    delete process.env[name];
+  }
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
-  if (savedExpandContextSize === undefined) delete process.env.QMD_EXPAND_CONTEXT_SIZE;
-  else process.env.QMD_EXPAND_CONTEXT_SIZE = savedExpandContextSize;
+  for (const name of ENV) {
+    const value = savedEnv.get(name);
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
 });
 
 const open = (options: Omit<StoreOptions, "dbPath"> = {}) => createStore({
@@ -163,6 +170,45 @@ test.each([
   }
   expect(warnings).toEqual([]);
   expect(output).toEqual([]);
+});
+
+test("llama.cpp log lines reach onWarning through node-llama-cpp's logger option", async () => {
+  const output = captureConsole();
+  const warnings: StoreWarning[] = [];
+  type LoggerOptions = { logger?: (level: string, message: string) => void };
+  // Stands in for node-llama-cpp. The real getLlama() passes llama.cpp's log
+  // lines to `logger`, or prints them when no logger is given.
+  const getLlama = vi.fn(async (options: LoggerOptions) => {
+    options.logger?.("error", "llama_model_load: error loading model vocabulary\n");
+    options.logger?.("info", "llama_context: n_ctx = 2048\n");
+    return { gpu: "metal", dispose: async () => {} };
+  });
+  setNodeLlamaCppModuleForTest({
+    getLlama,
+    LlamaLogLevel: { error: "error" },
+    resolveModelFile: vi.fn(),
+    LlamaChatSession: vi.fn(),
+  } as any);
+  try {
+    const withHandler = await open({ onWarning: (warning) => warnings.push(warning) });
+    const withoutHandler = await open();
+    try {
+      // Loads the llama.cpp runtime, as the first model call does.
+      await (withHandler.internal.llm as any).ensureLlama();
+      await (withoutHandler.internal.llm as any).ensureLlama();
+    } finally {
+      await Promise.all([withHandler.close(), withoutHandler.close()]);
+    }
+  } finally {
+    setNodeLlamaCppModuleForTest(null);
+  }
+
+  expect(warnings).toEqual([
+    { code: "LLAMA_CPP_LOG", message: "llama_model_load: error loading model vocabulary" },
+  ]);
+  expect(output).toEqual([]);
+  // Without onWarning, getLlama() gets no logger and keeps its console logger.
+  expect(getLlama.mock.calls[1]![0]).not.toHaveProperty("logger");
 });
 
 test("createStore rejects an onWarning that is not a function", async () => {

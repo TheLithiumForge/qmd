@@ -53,8 +53,9 @@
   `llm.js` loads.
 
 - `createStore({ onWarning })` hands the store's warnings to a callback, each
-  with a stable `code` and its `message`, and the console gets nothing.
-  Without it, warnings print as before.
+  with a stable `code` and its `message`, and the console gets nothing. That
+  includes the lines llama.cpp logs through node-llama-cpp. Without it,
+  warnings print as before.
 
 ### Fixed
 
