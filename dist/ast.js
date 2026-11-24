@@ -19,6 +19,7 @@
  */
 import { createRequire } from "node:module";
 import { extname } from "node:path";
+import { reportWarning } from "./warnings.js";
 const EXTENSION_MAP = {
     ".ts": "typescript",
     ".tsx": "tsx",
@@ -192,7 +193,7 @@ function resolveGrammarPath(language) {
  * Load and cache a grammar for the given language.
  * Returns null on failure (logs once per language).
  */
-async function loadGrammar(language) {
+async function loadGrammar(language, onWarning) {
     if (failedLanguages.has(language))
         return null;
     const wasmKey = GRAMMAR_MAP[language].wasm;
@@ -210,7 +211,11 @@ async function loadGrammar(language) {
         grammarCache.delete(wasmKey);
         const message = formatGrammarLoadError(language, err);
         grammarLoadErrors.set(language, message);
-        console.warn(`[qmd] AST grammar unavailable for ${language}: ${message}`);
+        reportWarning(onWarning, {
+            code: "AST_GRAMMAR_UNAVAILABLE",
+            message: `AST grammar unavailable for ${language}: ${message}`,
+            cause: err,
+        }, (text) => console.warn(`[qmd] ${text}`));
         return null;
     }
 }
@@ -236,15 +241,16 @@ function getQuery(language, grammar) {
  *
  * @param content - The file content to parse.
  * @param filepath - The file path (used for language detection).
+ * @param onWarning - Receives a grammar or parse failure instead of the console.
  * @returns Array of BreakPoint objects suitable for merging with regex break points.
  */
-export async function getASTBreakPoints(content, filepath) {
+export async function getASTBreakPoints(content, filepath, onWarning) {
     const language = detectLanguage(filepath);
     if (!language)
         return [];
     try {
         await ensureInit();
-        const grammar = await loadGrammar(language);
+        const grammar = await loadGrammar(language, onWarning);
         if (!grammar)
             return [];
         const parser = new ParserClass();
@@ -274,7 +280,11 @@ export async function getASTBreakPoints(content, filepath) {
         return Array.from(seen.values()).sort((a, b) => a.pos - b.pos);
     }
     catch (err) {
-        console.warn(`[qmd] AST parse failed for ${filepath}, falling back to regex: ${err instanceof Error ? err.message : err}`);
+        reportWarning(onWarning, {
+            code: "AST_PARSE_FAILED",
+            message: `AST parse failed for ${filepath}, falling back to regex: ${err instanceof Error ? err.message : err}`,
+            cause: err,
+        }, (text) => console.warn(`[qmd] ${text}`));
         return [];
     }
 }

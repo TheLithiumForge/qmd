@@ -18,6 +18,7 @@
  * grammar packages entirely.
  */
 import type { BreakPoint } from "./store.js";
+import { type StoreWarningHandler } from "./warnings.js";
 export type SupportedLanguage = "typescript" | "tsx" | "javascript" | "python" | "go" | "rust";
 /**
  * Detect language from file path extension.
@@ -33,9 +34,10 @@ export declare function formatGrammarLoadError(language: SupportedLanguage, err:
  *
  * @param content - The file content to parse.
  * @param filepath - The file path (used for language detection).
+ * @param onWarning - Receives a grammar or parse failure instead of the console.
  * @returns Array of BreakPoint objects suitable for merging with regex break points.
  */
-export declare function getASTBreakPoints(content: string, filepath: string): Promise<BreakPoint[]>;
+export declare function getASTBreakPoints(content: string, filepath: string, onWarning?: StoreWarningHandler): Promise<BreakPoint[]>;
 /**
  * Check which tree-sitter grammars are available.
  * Returns a status object for each supported language.

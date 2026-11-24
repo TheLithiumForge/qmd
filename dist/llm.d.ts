@@ -30,6 +30,7 @@ export declare function setNodeLlamaCppModuleForTest(module: NodeLlamaCppModule 
 export declare function withNativeStdoutRedirectedToStderr<T>(fn: () => Promise<T>): Promise<T>;
 import { type RemoteEmbedOptions } from "./remote-embed.js";
 import { type JevRerankOptions } from "./jev.js";
+import { type StoreWarningHandler } from "./warnings.js";
 /**
  * Detect if a model URI uses the Qwen3-Embedding format.
  * Qwen3-Embedding uses a different prompting style than nomic/embeddinggemma.
@@ -291,6 +292,8 @@ export type LlamaCppConfig = {
      * Without it, embedBatch, generate, expandQuery and rerank throw in CI.
      */
     allowInCI?: boolean;
+    /** Receives this instance's warnings instead of stderr. */
+    onWarning?: StoreWarningHandler;
 };
 export type LlamaGpuMode = "auto" | "metal" | "vulkan" | "cuda" | false;
 type ParallelismOptions = {
@@ -298,8 +301,9 @@ type ParallelismOptions = {
     platform?: NodeJS.Platform;
     computed: number;
     envValue?: string;
+    onWarning?: StoreWarningHandler;
 };
-export declare function resolveParallelismOverride(envValue?: string | undefined): number | undefined;
+export declare function resolveParallelismOverride(envValue?: string | undefined, onWarning?: StoreWarningHandler): number | undefined;
 export declare function resolveSafeParallelism(options: ParallelismOptions): number;
 /** Measured nomic-embed / embeddinggemma-300M embedding-context cost at 2048 tokens. */
 export declare const BASELINE_EMBED_CONTEXT_MB = 150;
@@ -334,7 +338,7 @@ export declare function estimateEmbedContextMB(options: {
     modelBytes: number;
     contextSize?: number;
 }): number;
-export declare function resolveLlamaGpuMode(envValue?: string | undefined, forceCpuValue?: string | undefined): LlamaGpuMode;
+export declare function resolveLlamaGpuMode(envValue?: string | undefined, forceCpuValue?: string | undefined, onWarning?: StoreWarningHandler): LlamaGpuMode;
 /**
  * Explicit resource lifecycle for one LlamaCpp instance:
  *
@@ -382,6 +386,7 @@ export declare class LlamaCpp implements LLM {
     private inactivityTimer;
     private inactivityTimeoutMs;
     private disposeModelsOnInactivity;
+    private readonly onWarning?;
     /**
      * Guards every resource borrow and disposal for this instance. Shared with
      * sessions opened through withLLMSession/withLLMSessionForLlm, and with the
@@ -555,6 +560,9 @@ export declare class LlamaCpp implements LLM {
      * borrows cannot be disposed by an idle unload until it returns.
      */
     private embedBatchOnContexts;
+    private warnTruncated;
+    /** `label` is the prefix QMD prints before the error without a handler. */
+    private warnEmbedFailed;
     generate(prompt: string, options?: GenerateOptions): Promise<GenerateResult | null>;
     /** Body of generate(), run under an operation lease. */
     private generateOnContext;

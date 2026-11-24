@@ -1,9 +1,9 @@
 # Rune changes
-The Rune release of QMD is a build of upstream `main` with eleven changes that give Rune searches without bodies, reusable query embeddings, file updates, per-store settings, read-only stores, a fast vector cleanup and keyword search on any term.
+The Rune release of QMD is a build of upstream `main` with twelve changes that give Rune searches without bodies, reusable query embeddings, file updates, per-store settings, read-only stores, a fast vector cleanup, keyword search on any term and store warnings it can catch.
 
 E.g. Rune embeds a query once, searches its document and section collections without loading bodies or contexts, then refreshes one changed file without scanning either collection.
 
-Status: Built from `rune/main` at `8d16d87`. `rune/main` is upstream `main` at `8be0c42` (QMD 2.9.0 and two commits) with one squash commit per change and six review follow-ups.
+Status: Built from `rune/main` at `42368d8`. `rune/main` is upstream `main` at `8be0c42` (QMD 2.9.0 and two commits) with one squash commit per change and six review follow-ups.
 
 ## Changes
 
@@ -22,8 +22,9 @@ Each change has its own branch from `main` and an open pull request against `mai
 | Orphan cleanup by hash | [#10](https://github.com/TheLithiumForge/qmd/pull/10) | `pr/orphan-cleanup-index` | `test/orphan-cleanup-index.test.ts` |
 | Any-term keyword search | [#11](https://github.com/TheLithiumForge/qmd/pull/11) | `pr/lex-any-term` | `test/lex-any-term.test.ts` |
 | Context sizes | [#12](https://github.com/TheLithiumForge/qmd/pull/12) | `pr/store-model-settings` | `test/store-model-settings.test.ts` |
+| Store warnings | [#13](https://github.com/TheLithiumForge/qmd/pull/13) | `pr/store-warnings` | `test/store-warnings.test.ts` |
 
-The pull request of each change says what it does, why it helps any library user and how it was tested. The busy timeout pull request works on `main` alone. On `rune/main`, a read-only store takes `busyTimeoutMs` too. The context size pull request also works on `main` alone. On `rune/main`, its two options join the `llm` group of #6.
+The pull request of each change says what it does, why it helps any library user and how it was tested. The busy timeout pull request works on `main` alone. On `rune/main`, a read-only store takes `busyTimeoutMs` too. The context size pull request also works on `main` alone. On `rune/main`, its two options join the `llm` group of #6. The store warnings pull request works on `main` alone too.
 
 The orphan cleanup fix makes `update()` fast again on a large index. Since upstream #1024, every `update()` ran a cleanup that read a whole collection for each vector row. On Rune's test index, one targeted update took about 25 s, and an edited file missed the 5 s keyword limit of the acceptance harness.
 
@@ -61,6 +62,6 @@ Run `npm run test:types`, `npm run build` and `npm run test:node` with `CI=1` in
 
 Upstream `main` passes the typecheck and the build. Its Node suite reports 1,584 passed, 122 failed and 138 skipped tests across 79 test files, and two `spawn sleep ENOENT` errors. Most failures are in the CLI, shell script, daemon and cross-process lock suites.
 
-At `8d16d87`, `rune/main` passes the typecheck of the build and of the whole project, the build and `oxlint`. Its Node suite reports 1,635 passed tests, the same 122 failed tests, 138 skipped tests and the same two errors across 90 test files. All 51 added tests pass.
+At `42368d8`, `rune/main` passes the typecheck of the build and of the whole project, the build and `oxlint`. Its Node suite reports 1,640 passed tests, the same 122 failed tests, 138 skipped tests and the same two errors across 91 test files. All 56 added tests pass.
 
-These counts come from PowerShell, in a checkout on another drive than the temp folder. Git Bash has a `sleep` command, which changes the counts. On the test machine, a checkout on the drive of the temp folder changes three results: `getRealPath resolves symlinks` fails, and two failing tests in `embed-lock-domain.test.ts` and `mcp.test.ts` pass.
+These counts come from PowerShell, in a checkout on another drive than the temp folder. Git Bash has a `sleep` command, which changes the counts. On the test machine, a checkout on the drive of the temp folder changes three results: `getRealPath resolves symlinks` fails, and two failing tests in `embed-lock-domain.test.ts` and `mcp.test.ts` pass. A `src/store.ts` with LF line endings in the working copy makes the bounded source scan test in `store-cjk-fts.test.ts` pass, since that test strips comments line by line.

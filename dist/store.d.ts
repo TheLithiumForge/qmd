@@ -17,6 +17,7 @@ import type { NamedCollection, Collection, CollectionConfig } from "./collection
 import { type DocumentMetadata } from "./metadata.js";
 import { type DocumentProcessor } from "./processors.js";
 import { type MetadataFilter } from "./metadata-filter.js";
+import { type StoreWarningHandler } from "./warnings.js";
 import { type MetadataKeyOverview } from "./metadata-store.js";
 export declare const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
 export declare const DEFAULT_RERANK_MODEL = "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
@@ -262,6 +263,8 @@ export type Store = {
     dbPath: string;
     /** Optional LlamaCpp instance for this store (overrides the global singleton) */
     llm?: LlamaCpp;
+    /** Receives this store's warnings instead of the console */
+    onWarning?: StoreWarningHandler;
     close: () => void;
     ensureVecTable: (dimensions: number) => void;
     getHashesNeedingEmbedding: (model?: string) => number;
@@ -524,11 +527,13 @@ export declare function generateEmbeddings(store: Store, options?: EmbedOptions)
  * @param dbPath - Path to the SQLite database file
  * @param options.readOnly - Open an existing index without write access. No table is created or migrated.
  * @param options.busyTimeoutMs - SQLite busy timeout in milliseconds. Takes precedence over QMD_SQLITE_BUSY_TIMEOUT.
+ * @param options.onWarning - Receives the store's warnings instead of the console
  * @returns Store instance with all methods bound to the database
  */
 export declare function createStore(dbPath?: string, options?: {
     readOnly?: boolean;
     busyTimeoutMs?: number;
+    onWarning?: StoreWarningHandler;
 }): Store;
 /**
  * Unified document result type with all metadata.
@@ -856,7 +861,7 @@ export declare function chunkDocument(content: string, maxChars?: number, overla
  * Falls back to regex-only when strategy is "regex", filepath is absent,
  * or language is unsupported.
  */
-export declare function chunkDocumentAsync(content: string, maxChars?: number, overlapChars?: number, windowChars?: number, filepath?: string, chunkStrategy?: ChunkStrategy): Promise<{
+export declare function chunkDocumentAsync(content: string, maxChars?: number, overlapChars?: number, windowChars?: number, filepath?: string, chunkStrategy?: ChunkStrategy, onWarning?: StoreWarningHandler): Promise<{
     text: string;
     pos: number;
 }[]>;

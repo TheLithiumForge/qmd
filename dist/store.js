@@ -29,6 +29,7 @@ import { METADATA_EXTRACTION_VERSION } from "./metadata.js";
 import { copyCommandProcessorSpec, snapshotProcessor } from "./processors.js";
 import { initializeProcessorSchema, requireProcessor, reindexProcessedFiles, removeProcessorState, renameProcessorState } from "./processor-store.js";
 import { compileMetadataFilter } from "./metadata-filter.js";
+import { reportWarning } from "./warnings.js";
 import { initializeMetadataSchema, syncDocumentMetadata, countDocumentsPendingMetadata, getMetadataByFilepath, listMetadataCollectionSummaries, parseMetadataJson, } from "./metadata-store.js";
 // =============================================================================
 // Configuration
@@ -799,14 +800,18 @@ function installFtsSyncTriggers(db) {
     END
   `);
 }
-/** Progress of the one-time vector layout upgrade, on stderr. */
-function vectorMigrationReporter() {
+/**
+ * Progress of the one-time vector layout upgrade, on stderr. A handler gets
+ * each step as a VECTOR_UPGRADE warning instead, without the live copy count.
+ */
+function vectorMigrationReporter(onWarning) {
     let startedAt = null;
-    const tty = Boolean(process.stderr.isTTY);
+    const tty = !onWarning && Boolean(process.stderr.isTTY);
+    const step = (message, indent = "  ") => reportWarning(onWarning, { code: "VECTOR_UPGRADE", message }, (text) => process.stderr.write(`${indent}${text}\n`));
     return ({ phase, copied, total }) => {
         if (startedAt === null) {
             startedAt = Date.now();
-            process.stderr.write(`Moving ${total} vectors to the per-collection index layout (one-time upgrade)...\n`);
+            step(`Moving ${total} vectors to the per-collection index layout (one-time upgrade)...`, "");
         }
         if (phase === "copy") {
             if (tty)
@@ -816,13 +821,13 @@ function vectorMigrationReporter() {
         if (tty)
             process.stderr.write("\r");
         if (phase === "verify")
-            process.stderr.write(`  copied ${copied}/${total}; verifying...\n`);
+            step(`copied ${copied}/${total}; verifying...`);
         else if (phase === "flip")
-            process.stderr.write(`  dropping the old vector table...\n`);
+            step(`dropping the old vector table...`);
         else if (phase === "vacuum")
-            process.stderr.write(`  vacuuming the index (minutes on a large index)...\n`);
+            step(`vacuuming the index (minutes on a large index)...`);
         else
-            process.stderr.write(`  vector index upgraded in ${Math.round((Date.now() - startedAt) / 1000)}s\n`);
+            step(`vector index upgraded in ${Math.round((Date.now() - startedAt) / 1000)}s`);
     };
 }
 /**
@@ -1144,7 +1149,7 @@ function openReadOnlyDatabase(path, busyTimeoutMs) {
     readOnlyDatabases.add(db);
     return db;
 }
-function initializeDatabase(db, readOnly = false) {
+function initializeDatabase(db, readOnly = false, onWarning) {
     try {
         loadSqliteVec(db);
         verifySqliteVecLoaded(db);
@@ -1155,7 +1160,7 @@ function initializeDatabase(db, readOnly = false) {
         // sqlite-vec is optional — vector search won't work but FTS is fine
         _sqliteVecAvailable = false;
         _sqliteVecUnavailableReason = getErrorMessage(err);
-        console.warn(_sqliteVecUnavailableReason);
+        reportWarning(onWarning, { code: "SQLITE_VEC_UNAVAILABLE", message: _sqliteVecUnavailableReason, cause: err }, (message) => console.warn(message));
     }
     if (readOnly)
         return;
@@ -1258,7 +1263,8 @@ function initializeDatabase(db, readOnly = false) {
     runStoreMigrations(db, {
         installFtsSyncTriggers,
         sqliteVecAvailable: _sqliteVecAvailable === true,
-        onProgress: vectorMigrationReporter(),
+        onProgress: vectorMigrationReporter(onWarning),
+        onWarning,
     });
     rebuildFTSForCjkNormalization(db);
 }
@@ -1449,13 +1455,13 @@ function dropVectorIndex(db) {
         db.exec(`DELETE FROM ${VEC_ROWS_TABLE}`);
     }).immediate();
 }
-function ensureVecTableInternal(db, dimensions) {
+function ensureVecTableInternal(db, dimensions, onWarning) {
     if (!_sqliteVecAvailable) {
         throw createSqliteVecUnavailableError(_sqliteVecUnavailableReason ?? "vector operations require a SQLite build with extension loading support");
     }
     let layout = vecLayout(db);
     if (layout.kind === "legacy") {
-        migrateVectorLayout(db, { sqliteVecAvailable: true, onProgress: vectorMigrationReporter() });
+        migrateVectorLayout(db, { sqliteVecAvailable: true, onProgress: vectorMigrationReporter(onWarning), onWarning });
         layout = vecLayout(db);
     }
     if (layout.kind === "partitioned") {
@@ -2304,10 +2310,17 @@ async function embedWithIndexLockHeld(store, batchOptions, options) {
             } while (session.isValid && retryableChunks().length > 0);
         };
         const batches = buildEmbeddingBatches(docsToEmbed, maxDocsPerBatch, maxBatchBytes);
+        const warn = (code, message) => reportWarning(store.onWarning, { code, message }, (text) => console.warn(`⚠ ${text}`));
+        // The session also ends when the caller aborts through its own signal.
+        // That stop is the caller's choice, so it is no warning.
+        const warnExpired = (message) => {
+            if (!options?.signal?.aborted)
+                warn("EMBED_SESSION_EXPIRED", message);
+        };
         for (const batchMeta of batches) {
             // Abort early if session has been invalidated
             if (!session.isValid) {
-                console.warn(`⚠ Session expired — skipping remaining document batches`);
+                warnExpired("Session expired — skipping remaining document batches");
                 break;
             }
             const batchDocs = getEmbeddingDocsForBatch(db, batchMeta);
@@ -2318,7 +2331,7 @@ async function embedWithIndexLockHeld(store, batchOptions, options) {
                 if (!doc.body.trim())
                     continue;
                 const title = extractTitle(doc.body, doc.path);
-                const chunks = await chunkDocumentByTokensWithLlm(llm, doc.body, undefined, undefined, undefined, doc.path, options?.chunkStrategy, session.signal);
+                const chunks = await chunkDocumentByTokensWithLlm(llm, doc.body, undefined, undefined, undefined, doc.path, options?.chunkStrategy, session.signal, store.onWarning);
                 for (let seq = 0; seq < chunks.length; seq++) {
                     batchChunks.push({
                         hash: doc.hash,
@@ -2358,7 +2371,7 @@ async function embedWithIndexLockHeld(store, batchOptions, options) {
                     const remainingChunks = batchChunks.slice(batchStart);
                     for (const chunk of remainingChunks)
                         recordFailure(chunk, "LLM session expired before embedding chunk");
-                    console.warn(`⚠ Session expired — skipping ${remainingChunks.length} remaining chunks`);
+                    warnExpired(`Session expired — skipping ${remainingChunks.length} remaining chunks`);
                     break;
                 }
                 // Abort early if active error rate is too high (>80% of attempted chunks failed)
@@ -2367,7 +2380,7 @@ async function embedWithIndexLockHeld(store, batchOptions, options) {
                     const remainingChunks = batchChunks.slice(batchStart);
                     for (const chunk of remainingChunks)
                         recordFailure(chunk, "embedding aborted because error rate was too high");
-                    console.warn(`⚠ Error rate too high (${activeErrorCount()}/${processed}) — aborting embedding`);
+                    warn("EMBED_ERROR_RATE", `Error rate too high (${activeErrorCount()}/${processed}) — aborting embedding`);
                     break;
                 }
                 const batchEnd = Math.min(batchStart + BATCH_SIZE, batchChunks.length);
@@ -2475,6 +2488,7 @@ async function embedWithIndexLockHeld(store, batchOptions, options) {
  * @param dbPath - Path to the SQLite database file
  * @param options.readOnly - Open an existing index without write access. No table is created or migrated.
  * @param options.busyTimeoutMs - SQLite busy timeout in milliseconds. Takes precedence over QMD_SQLITE_BUSY_TIMEOUT.
+ * @param options.onWarning - Receives the store's warnings instead of the console
  * @returns Store instance with all methods bound to the database
  */
 export function createStore(dbPath, options = {}) {
@@ -2482,12 +2496,13 @@ export function createStore(dbPath, options = {}) {
     const db = options.readOnly
         ? openReadOnlyDatabase(resolvedPath, options.busyTimeoutMs)
         : openDatabase(resolvedPath, { busyTimeoutMs: options.busyTimeoutMs });
-    initializeDatabase(db, options.readOnly);
+    initializeDatabase(db, options.readOnly, options.onWarning);
     const store = {
         db,
         dbPath: resolvedPath,
+        onWarning: options.onWarning,
         close: () => db.close(),
-        ensureVecTable: (dimensions) => ensureVecTableInternal(db, dimensions),
+        ensureVecTable: (dimensions) => ensureVecTableInternal(db, dimensions, store.onWarning),
         // Index health
         getHashesNeedingEmbedding: (model) => getHashesNeedingEmbedding(db, undefined, model ?? store.llm?.embedModelName ?? DEFAULT_EMBED_MODEL),
         getIndexHealth: (model) => getIndexHealth(db, model ?? store.llm?.embedModelName ?? DEFAULT_EMBED_MODEL),
@@ -3293,13 +3308,13 @@ export function chunkDocument(content, maxChars = CHUNK_SIZE_CHARS, overlapChars
  * Falls back to regex-only when strategy is "regex", filepath is absent,
  * or language is unsupported.
  */
-export async function chunkDocumentAsync(content, maxChars = CHUNK_SIZE_CHARS, overlapChars = CHUNK_OVERLAP_CHARS, windowChars = CHUNK_WINDOW_CHARS, filepath, chunkStrategy = "regex") {
+export async function chunkDocumentAsync(content, maxChars = CHUNK_SIZE_CHARS, overlapChars = CHUNK_OVERLAP_CHARS, windowChars = CHUNK_WINDOW_CHARS, filepath, chunkStrategy = "regex", onWarning) {
     const regexPoints = scanBreakPoints(content);
     const codeFences = findCodeFences(content);
     let breakPoints = regexPoints;
     if (chunkStrategy === "auto" && filepath) {
         const { getASTBreakPoints } = await import("./ast.js");
-        const astPoints = await getASTBreakPoints(content, filepath);
+        const astPoints = await getASTBreakPoints(content, filepath, onWarning);
         if (astPoints.length > 0) {
             breakPoints = mergeBreakPoints(regexPoints, astPoints);
         }
@@ -3368,7 +3383,7 @@ function stripUnpairedSurrogates(text) {
  * When filepath and chunkStrategy are provided, uses AST-aware break points
  * for supported code files.
  */
-async function chunkDocumentByTokensWithLlm(llm, content, maxTokens = CHUNK_SIZE_TOKENS, overlapTokens = CHUNK_OVERLAP_TOKENS, windowTokens = CHUNK_WINDOW_TOKENS, filepath, chunkStrategy = "regex", signal) {
+async function chunkDocumentByTokensWithLlm(llm, content, maxTokens = CHUNK_SIZE_TOKENS, overlapTokens = CHUNK_OVERLAP_TOKENS, windowTokens = CHUNK_WINDOW_TOKENS, filepath, chunkStrategy = "regex", signal, onWarning) {
     if (llm.embedModelName?.startsWith("remote-openai:")) {
         signal?.throwIfAborted();
         // Fixed remote format v1: the existing surrogate-safe character chunker,
@@ -3384,7 +3399,7 @@ async function chunkDocumentByTokensWithLlm(llm, content, maxTokens = CHUNK_SIZE
     const windowChars = windowTokens * avgCharsPerToken;
     // Chunk in character space with conservative estimate
     // Use AST-aware chunking for the first pass when filepath/strategy provided
-    let charChunks = await chunkDocumentAsync(content, maxChars, overlapChars, windowChars, filepath, chunkStrategy);
+    let charChunks = await chunkDocumentAsync(content, maxChars, overlapChars, windowChars, filepath, chunkStrategy, onWarning);
     // Tokenize and split any chunks that still exceed limit
     const results = [];
     const clampOverlapChars = (value, maxChars) => {
@@ -5757,7 +5772,7 @@ export async function hybridQuery(store, query, options) {
     const chunkStrategy = options?.chunkStrategy;
     for (const cand of candidates) {
         signal?.throwIfAborted();
-        const chunks = await chunkDocumentAsync(cand.body, undefined, undefined, undefined, cand.file, chunkStrategy);
+        const chunks = await chunkDocumentAsync(cand.body, undefined, undefined, undefined, cand.file, chunkStrategy, store.onWarning);
         signal?.throwIfAborted();
         if (chunks.length === 0)
             continue;
@@ -6096,7 +6111,7 @@ export async function structuredSearch(store, searches, options) {
     const ssChunkStrategy = options?.chunkStrategy;
     for (const cand of candidates) {
         signal?.throwIfAborted();
-        const chunks = await chunkDocumentAsync(cand.body, undefined, undefined, undefined, cand.file, ssChunkStrategy);
+        const chunks = await chunkDocumentAsync(cand.body, undefined, undefined, undefined, cand.file, ssChunkStrategy, store.onWarning);
         signal?.throwIfAborted();
         if (chunks.length === 0)
             continue;

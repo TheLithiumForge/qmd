@@ -202,6 +202,9 @@ export async function createStore(options) {
     if (idleTimeout !== undefined && (!Number.isInteger(idleTimeout) || idleTimeout < 0 || idleTimeout > 2_147_483_647)) {
         throw new Error(`Invalid modelIdleTimeoutMs: ${idleTimeout}. Must be an integer from 0 to 2147483647.`);
     }
+    if (options.onWarning !== undefined && typeof options.onWarning !== "function") {
+        throw new TypeError("onWarning must be a function");
+    }
     // Each store owns its own configuration scope. A YAML or inline source is
     // bound to this store for its lifetime, so another store created in the same
     // process can neither redirect nor reset this store's write-through target.
@@ -225,8 +228,13 @@ export async function createStore(options) {
         rerankOptions: configuredConfig?.models?.rerankOptions,
         inactivityTimeoutMs: options.modelIdleTimeoutMs ?? 5 * 60 * 1000,
         disposeModelsOnInactivity: true,
+        onWarning: options.onWarning,
     });
-    const internal = createStoreInternal(options.dbPath, { readOnly: options.readOnly, busyTimeoutMs: options.busyTimeoutMs });
+    const internal = createStoreInternal(options.dbPath, {
+        readOnly: options.readOnly,
+        busyTimeoutMs: options.busyTimeoutMs,
+        onWarning: options.onWarning,
+    });
     const db = internal.db;
     // Seed SQLite from the configuration that is authoritative now, read under
     // the config lock. A lock-free read and a later sync would delete a

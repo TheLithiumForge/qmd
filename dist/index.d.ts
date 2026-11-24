@@ -1,5 +1,7 @@
 import { extractSnippet, addLineNumbers, DEFAULT_MULTI_GET_MAX_BYTES, EmbedLockBusyError, type Store as InternalStore, type DocumentResult, type DocumentNotFound, type DocumentExcludedByIgnore, type DocumentLookupError, type SearchResult, type HybridQueryResult, type HybridQueryOptions, type HybridQueryExplain, type ExpandedQuery, type StructuredSearchOptions, type MultiGetResult, type IndexStatus, type IndexHealthInfo, type SearchHooks, type ReindexProgress, type ReindexResult, type EmbedProgress, type EmbedResult, type ChunkStrategy } from "./store.js";
 import { type LlamaCppConfig } from "./llm.js";
+import type { StoreWarning } from "./warnings.js";
+export type { StoreWarning, StoreWarningCode } from "./warnings.js";
 export { RemoteEmbedder } from "./remote-embed.js";
 export type { RemoteEmbedOptions } from "./remote-embed.js";
 export { JevReranker } from "./jev.js";
@@ -173,6 +175,12 @@ export interface StoreOptions {
      * Defaults to 120000. Zero fails at once.
      */
     busyTimeoutMs?: number;
+    /**
+     * Receives each warning this store would print, with a stable code, and
+     * the console gets nothing. It runs synchronously where the warning comes
+     * up. Without it, warnings print as before.
+     */
+    onWarning?: (warning: StoreWarning) => void;
 }
 /**
  * The QMD SDK store — provides search, retrieval, collection management,

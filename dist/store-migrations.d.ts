@@ -15,6 +15,7 @@
  * share one IMMEDIATE transaction, so that drop is the flip.
  */
 import type { Database } from "./db.js";
+import { type StoreWarningHandler } from "./warnings.js";
 export declare const FTS_SYNC_TRIGGERS_VERSION = 1;
 export declare const VECTOR_PARTITION_VERSION = 2;
 export declare function getUserVersion(db: Database): number;
@@ -36,6 +37,7 @@ export type VectorMigrationProgress = {
 export type VectorMigrationOptions = {
     sqliteVecAvailable: boolean;
     onProgress?: (progress: VectorMigrationProgress) => void;
+    onWarning?: StoreWarningHandler;
 };
 export type VectorMigrationResult = "applied" | "deferred";
 /**

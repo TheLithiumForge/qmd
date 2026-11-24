@@ -15,6 +15,7 @@
  * share one IMMEDIATE transaction, so that drop is the flip.
  */
 import { LEGACY_VEC_TABLE, PartitionWriter, VEC_ROWS_TABLE, VEC_TABLE, createPartitionedVecTable, missingPartitionRows, parseDimensions, vecLayout, vecTableReadable, } from "./vec-layout.js";
+import { reportWarning } from "./warnings.js";
 export const FTS_SYNC_TRIGGERS_VERSION = 1;
 export const VECTOR_PARTITION_VERSION = 2;
 const CURSOR_KEY = "vector_partition_cursor";
@@ -209,7 +210,11 @@ export function migrateVectorLayout(db, options) {
             db.exec(`VACUUM`);
         }
         catch (err) {
-            console.warn(`VACUUM after the vector migration did not run (${err instanceof Error ? err.message : String(err)}); run 'qmd cleanup' to reclaim the space.`);
+            reportWarning(options.onWarning, {
+                code: "VECTOR_VACUUM_FAILED",
+                message: `VACUUM after the vector migration did not run (${err instanceof Error ? err.message : String(err)}); run 'qmd cleanup' to reclaim the space.`,
+                cause: err,
+            }, (message) => console.warn(message));
         }
     }
     report("done", total);
@@ -235,7 +240,11 @@ export function runStoreMigrations(db, deps) {
             migrateVectorLayout(db, deps);
         }
         catch (err) {
-            console.warn(`Legacy vector table left in place: ${err instanceof Error ? err.message : String(err)}`);
+            reportWarning(deps.onWarning, {
+                code: "LEGACY_VECTOR_TABLE_KEPT",
+                message: `Legacy vector table left in place: ${err instanceof Error ? err.message : String(err)}`,
+                cause: err,
+            }, (message) => console.warn(message));
         }
     }
 }
