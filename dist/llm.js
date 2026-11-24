@@ -392,6 +392,21 @@ const DEFAULT_RERANK_CONTEXT_SIZE = 4096;
 function printQmdWarning(message) {
     process.stderr.write(`QMD Warning: ${message}\n`);
 }
+/**
+ * The `logger` option of node-llama-cpp's getLlama() for a warning handler:
+ * llama.cpp's warnings, errors and fatal messages reach the handler as
+ * LLAMA_CPP_LOG, and nothing prints. Lower levels are dropped. Without a
+ * handler there is no logger, so node-llama-cpp prints as before.
+ */
+function llamaCppLoggerFor(onWarning) {
+    if (!onWarning)
+        return undefined;
+    return (level, message) => {
+        if (level === "warn" || level === "error" || level === "fatal") {
+            onWarning({ code: "LLAMA_CPP_LOG", message: message.trimEnd() });
+        }
+    };
+}
 export function resolveParallelismOverride(envValue = process.env.QMD_EMBED_PARALLELISM, onWarning) {
     const normalized = envValue?.trim() ?? "";
     if (!normalized)
@@ -981,6 +996,7 @@ export class LlamaCpp {
             // Skip source build when install dir is read-only (e.g. NixOS store).
             const canBuild = allowBuild && !this.skipDownload && canWriteLlamaDir();
             const { getLlama, getLlamaGpuTypes, LlamaLogLevel } = await loadNodeLlamaCpp();
+            const logger = llamaCppLoggerFor(this.onWarning);
             const loadLlama = async (gpu, sourceBuildAllowed = canBuild, buildOverride) => await withNativeStdoutRedirectedToStderr(() => getLlama({
                 // Prefer packaged prebuilt bindings before compiling llama.cpp locally.
                 // node-llama-cpp documents gpu:"auto" as the best default: Metal on
@@ -989,6 +1005,8 @@ export class LlamaCpp {
                 // diagnostic/probe paths that must not compile llama.cpp.
                 build: buildOverride ?? (sourceBuildAllowed ? "auto" : "never"),
                 logLevel: LlamaLogLevel.error,
+                // Without a handler, node-llama-cpp keeps its console logger.
+                ...(logger ? { logger } : {}),
                 gpu,
                 progressLogs: false,
                 skipDownload: !sourceBuildAllowed,

@@ -3,7 +3,7 @@ The Rune release of QMD is a build of upstream `main` with twelve changes that g
 
 E.g. Rune embeds a query once, searches its document and section collections without loading bodies or contexts, then refreshes one changed file without scanning either collection.
 
-Status: Built from `rune/main` at `42368d8`. `rune/main` is upstream `main` at `8be0c42` (QMD 2.9.0 and two commits) with one squash commit per change and six review follow-ups.
+Status: Built from `rune/main` at `7861452`. `rune/main` is upstream `main` at `8be0c42` (QMD 2.9.0 and two commits) with one squash commit per change and seven follow-ups.
 
 ## Changes
 
@@ -30,7 +30,7 @@ The orphan cleanup fix makes `update()` fast again on a large index. Since upstr
 
 ## Review follow-ups
 
-A review of the ten pull requests led to six more commits. Each one is a commit on its `pr/` branch and a follow-up on `rune/main`, whose subject names the pull request:
+A review of the ten pull requests led to six more commits, and a review of #13 to one more. Each one is a commit on its `pr/` branch and a follow-up on `rune/main`, whose subject names the pull request:
 
 | Pull request | Follow-up on `rune/main` | Change |
 | --- | --- | --- |
@@ -40,6 +40,7 @@ A review of the ten pull requests led to six more commits. Each one is a commit 
 | [#4](https://github.com/TheLithiumForge/qmd/pull/4) | `76dc1e6` | `modelIdleTimeoutMs` stops at 2,147,483,647 ms, the largest delay a timer takes |
 | [#10](https://github.com/TheLithiumForge/qmd/pull/10) | `08b3be0` | The changelog bullet joins the Fixed list |
 | [#11](https://github.com/TheLithiumForge/qmd/pull/11) | `63698b0` | A test that a quoted phrase stays a phrase with `anyTerm` |
+| [#13](https://github.com/TheLithiumForge/qmd/pull/13) | `7861452` | llama.cpp's log lines reach `onWarning` through node-llama-cpp's `logger` option |
 
 The squash commits keep their first message, since rewriting them needs a force-push. The next rebuild of `rune/main` after upstream moves folds each follow-up into its squash commit.
 
@@ -62,6 +63,6 @@ Run `npm run test:types`, `npm run build` and `npm run test:node` with `CI=1` in
 
 Upstream `main` passes the typecheck and the build. Its Node suite reports 1,584 passed, 122 failed and 138 skipped tests across 79 test files, and two `spawn sleep ENOENT` errors. Most failures are in the CLI, shell script, daemon and cross-process lock suites.
 
-At `42368d8`, `rune/main` passes the typecheck of the build and of the whole project, the build and `oxlint`. Its Node suite reports 1,640 passed tests, the same 122 failed tests, 138 skipped tests and the same two errors across 91 test files. All 56 added tests pass.
+At `42368d8`, `rune/main` passes the typecheck of the build and of the whole project, the build and `oxlint`. Its Node suite reports 1,640 passed tests, the same 122 failed tests, 138 skipped tests and the same two errors across 91 test files. All 56 added tests pass. The follow-up `7861452` adds one test. The typecheck, the build and the focused test pass on it, and the full suite didn't run again.
 
 These counts come from PowerShell, in a checkout on another drive than the temp folder. Git Bash has a `sleep` command, which changes the counts. On the test machine, a checkout on the drive of the temp folder changes three results: `getRealPath resolves symlinks` fails, and two failing tests in `embed-lock-domain.test.ts` and `mcp.test.ts` pass. A `src/store.ts` with LF line endings in the working copy makes the bounded source scan test in `store-cjk-fts.test.ts` pass, since that test strips comments line by line.
